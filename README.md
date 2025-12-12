@@ -46,7 +46,7 @@ openUploader(options?: UploadCareUploadOptions | undefined) => Promise<UploadCar
 ```
 
 Open the native Uploadcare picker/uploader.
-You will call this from your Ionic components (IonButton, IonItem, etc.).
+You will call this from Ionic components (IonButton, IonItem, etc.).
 
 | Param         | Type                                                                        |
 | ------------- | --------------------------------------------------------------------------- |

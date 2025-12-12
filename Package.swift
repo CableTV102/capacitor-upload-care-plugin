@@ -10,19 +10,23 @@ let package = Package(
             targets: ["CapUploadCarePlugin"])
     ],
     dependencies: [
-        .package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", from: "7.0.0")
+        .package(
+            url: "https://github.com/uploadcare/uploadcare-swift.git",
+            .upToNextMajor(from: "0.14.0")),
+        .package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", from: "7.0.0"),
     ],
     targets: [
         .target(
             name: "CapUploadCarePlugin",
             dependencies: [
                 .product(name: "Capacitor", package: "capacitor-swift-pm"),
-                .product(name: "Cordova", package: "capacitor-swift-pm")
+                .product(name: "Cordova", package: "capacitor-swift-pm"),
+                .product(name: "Uploadcare", package: "uploadcare-swift"),
             ],
             path: "ios/Sources/CapUploadCarePlugin"),
         .testTarget(
             name: "CapUploadCarePluginTests",
             dependencies: ["CapUploadCarePlugin"],
-            path: "ios/Tests/CapUploadCarePluginTests")
+            path: "ios/Tests/CapUploadCarePluginTests"),
     ]
 )
