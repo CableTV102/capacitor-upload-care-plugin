@@ -14,7 +14,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class CapUploadCare {
-
+    
     private static final String TAG = "CapUploadCare";
 
     private UploadcareClient client;

@@ -24,7 +24,7 @@ public class CapUploadCarePlugin extends Plugin {
     private final CapUploadCare implementation = new CapUploadCare();
     private PluginCall pendingCall;
 
-    // JS: CapUploadCare.configure({ publicKey, secretKey?, debug? })
+    // JS: CapUploadCare.configure(...)
     @PluginMethod
     public void configure(PluginCall call) {
         String publicKey = call.getString("publicKey");
@@ -41,10 +41,9 @@ public class CapUploadCarePlugin extends Plugin {
         call.resolve();
     }
 
-    // JS: CapUploadCare.openUploader(options?)
+    // JS: CapUploadCare.openUploader(...)
     @PluginMethod
     public void openUploader(PluginCall call) {
-        // Prevent multiple concurrent uploads
         if (pendingCall != null) {
             call.reject("An upload is already in progress");
             return;
@@ -54,12 +53,10 @@ public class CapUploadCarePlugin extends Plugin {
         intent.setType("image/*");
 
         pendingCall = call;
-
-        // This will call handleImagePickerResult once the user finishes selection
         startActivityForResult(call, intent, "handleImagePickerResult");
     }
 
-    // JS: CapUploadCare.uploadDataUri({ dataUri, fileName })
+    // JS: CapUploadCare.uploadDataUri(...)
     @PluginMethod
     public void uploadDataUri(PluginCall call) {
         String dataUri = call.getString("dataUri");
@@ -75,19 +72,18 @@ public class CapUploadCarePlugin extends Plugin {
             return;
         }
 
-        int commaIndex = dataUri.indexOf(",");
+        int commaIndex = dataUri.indexOf(',');
         if (commaIndex == -1) {
-            call.reject("Invalid dataUri format, missing comma");
+            call.reject("Invalid dataUri format");
             return;
         }
 
-        String base64Part = dataUri.substring(commaIndex + 1);
-
         byte[] bytes;
         try {
-            bytes = Base64.decode(base64Part, Base64.DEFAULT);
-        } catch (IllegalArgumentException e) {
-            call.reject("Invalid base64 data in dataUri", e);
+            String base64 = dataUri.substring(commaIndex + 1);
+            bytes = Base64.decode(base64, Base64.DEFAULT);
+        } catch (Exception e) {
+            call.reject("Invalid base64 data", e);
             return;
         }
 
@@ -108,23 +104,20 @@ public class CapUploadCarePlugin extends Plugin {
                     fileObj.put("mimeType", fileMap.get("mimeType"));
                 }
 
-                JSArray filesArray = new JSArray();
-                filesArray.put(fileObj);
+                JSArray files = new JSArray();
+                files.put(fileObj);
 
                 JSObject ret = new JSObject();
                 ret.put("success", true);
                 ret.put("cancelled", false);
-                ret.put("files", filesArray);
+                ret.put("files", files);
 
                 call.resolve(ret);
             }
 
             @Override
             public void onError(Exception error) {
-            savedCall.reject(
-                error.getMessage() != null ? error.getMessage() : "Upload failed",
-                error
-            );
+                call.reject(error.getMessage(), error);
             }
         });
     }
@@ -132,17 +125,13 @@ public class CapUploadCarePlugin extends Plugin {
     @ActivityCallback
     private void handleImagePickerResult(PluginCall call, ActivityResult result) {
         if (pendingCall == null) {
-            // Nothing to do
             return;
         }
 
         PluginCall savedCall = pendingCall;
         pendingCall = null;
 
-        int resultCode = result.getResultCode();
-        Intent data = result.getData();
-
-        if (resultCode == Activity.RESULT_CANCELED || data == null) {
+        if (result.getResultCode() == Activity.RESULT_CANCELED || result.getData() == null) {
             JSObject ret = new JSObject();
             ret.put("success", false);
             ret.put("cancelled", true);
@@ -151,7 +140,7 @@ public class CapUploadCarePlugin extends Plugin {
             return;
         }
 
-        Uri uri = data.getData();
+        Uri uri = result.getData().getData();
         if (uri == null) {
             savedCall.reject("No image selected");
             return;
@@ -159,7 +148,6 @@ public class CapUploadCarePlugin extends Plugin {
 
         Context context = getContext();
 
-        // Delegate upload to our implementation (Uploadcare SDK)
         implementation.uploadSingle(context, uri, new CapUploadCare.UploadCallback() {
             @Override
             public void onSuccess(Map<String, Object> fileMap) {
@@ -177,23 +165,20 @@ public class CapUploadCarePlugin extends Plugin {
                     fileObj.put("mimeType", fileMap.get("mimeType"));
                 }
 
-                JSArray filesArray = new JSArray();
-                filesArray.put(fileObj);
+                JSArray files = new JSArray();
+                files.put(fileObj);
 
                 JSObject ret = new JSObject();
                 ret.put("success", true);
                 ret.put("cancelled", false);
-                ret.put("files", filesArray);
+                ret.put("files", files);
 
                 savedCall.resolve(ret);
             }
 
             @Override
             public void onError(Exception error) {
-            savedCall.reject(
-                error.getMessage() != null ? error.getMessage() : "Upload failed",
-                error
-            );
+                savedCall.reject(error.getMessage(), error);
             }
         });
     }
