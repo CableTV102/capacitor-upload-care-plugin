@@ -120,8 +120,11 @@ public class CapUploadCarePlugin extends Plugin {
             }
 
             @Override
-            public void onError(Throwable error) {
-                call.reject(error.getMessage(), error);
+            public void onError(Exception error) {
+            savedCall.reject(
+                error.getMessage() != null ? error.getMessage() : "Upload failed",
+                error
+            );
             }
         });
     }
@@ -186,8 +189,11 @@ public class CapUploadCarePlugin extends Plugin {
             }
 
             @Override
-            public void onError(Throwable error) {
-                savedCall.reject(error.getMessage(), error);
+            public void onError(Exception error) {
+            savedCall.reject(
+                error.getMessage() != null ? error.getMessage() : "Upload failed",
+                error
+            );
             }
         });
     }

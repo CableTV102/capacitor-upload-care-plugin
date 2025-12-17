@@ -27,8 +27,7 @@ public class CapUploadCare {
         if (secretKey != null && !secretKey.isEmpty()) {
             client = new UploadcareClient(publicKey, secretKey);
         } else {
-            // For Upload API–only usage, secret key can be omitted
-            client = new UploadcareClient(publicKey, null);
+            client = new UploadcareClient(publicKey);
         }
 
         if (debug) {
@@ -38,7 +37,7 @@ public class CapUploadCare {
 
     public interface UploadCallback {
         void onSuccess(Map<String, Object> fileMap);
-        void onError(Throwable error);
+        void onError(Exception error);
     }
 
     // Upload from raw bytes (for dataUri path)
