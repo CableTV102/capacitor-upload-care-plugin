@@ -14,7 +14,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class CapUploadCare {
-    
+
     private static final String TAG = "CapUploadCare";
 
     private UploadcareClient client;
@@ -80,18 +80,15 @@ public class CapUploadCare {
                 Map<String, Object> map = new HashMap<>();
                 map.put("uuid", uuid);
                 map.put("cdnUrl", cdnUrl);
+                map.put("sizeBytes", file.getSize());
 
                 if (file.getOriginalFilename() != null) {
                     map.put("filename", file.getOriginalFilename());
-                }
-                if (file.getSize() != null) {
-                    map.put("sizeBytes", file.getSize());
                 }
                 if (file.getMimeType() != null) {
                     map.put("mimeType", file.getMimeType());
                 }
 
-                // width/height are optional in your TS type; we can add later
                 callback.onSuccess(map);
             }
         });
@@ -103,7 +100,6 @@ public class CapUploadCare {
             return;
         }
 
-        // Use Uploadcare Android SDK FileUploader, as in their Kotlin docs
         FileUploader uploader = new FileUploader(client, uri, context).store(true);
 
         uploader.uploadAsync(new UploadFileCallback() {
@@ -125,7 +121,6 @@ public class CapUploadCare {
 
             @Override
             public void onSuccess(UploadcareFile file) {
-                // Mirror TS UploadCareFile as closely as possible
                 String uuid = file.getUuid();
                 String cdnUrl;
 
@@ -138,18 +133,15 @@ public class CapUploadCare {
                 Map<String, Object> map = new HashMap<>();
                 map.put("uuid", uuid);
                 map.put("cdnUrl", cdnUrl);
+                map.put("sizeBytes", file.getSize());
 
                 if (file.getOriginalFilename() != null) {
                     map.put("filename", file.getOriginalFilename());
-                }
-                if (file.getSize() != null) {
-                    map.put("sizeBytes", file.getSize());
                 }
                 if (file.getMimeType() != null) {
                     map.put("mimeType", file.getMimeType());
                 }
 
-                // width/height are optional in your TS type; we can add later
                 callback.onSuccess(map);
             }
         });
