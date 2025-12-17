@@ -8,7 +8,7 @@ import com.uploadcare.android.library.api.UploadcareClient;
 import com.uploadcare.android.library.callbacks.UploadFileCallback;
 import com.uploadcare.android.library.exceptions.UploadcareApiException;
 import com.uploadcare.android.library.upload.FileUploader;
-import com.uploadcare.android.library.upload.UploadcareFile;
+import com.uploadcare.android.library.api.UploadcareFile;
 
 import java.util.HashMap;
 import java.util.Map;
