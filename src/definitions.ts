@@ -1,3 +1,15 @@
+import type { PluginListenerHandle } from '@capacitor/core';
+
+export type UploadCareMediaType = 'image' | 'video' | 'any';
+
+export interface UploadCareProgressEvent {
+  uploadId: string;
+  progress: number; // 0..100
+  bytesWritten?: number;
+  contentLength?: number;
+  mediaType: 'image' | 'video';
+}
+
 export interface CapUploadCarePlugin {
   /**
    * Configure the Uploadcare SDK.
@@ -16,6 +28,15 @@ export interface CapUploadCarePlugin {
    * Expects a full data URI like: data:image/jpeg;base64,/9j/4AAQSk...
    */
   uploadDataUri(options: UploadCareDataUriOptions): Promise<UploadCareUploadResult>;
+  /**
+   * Upload progress events while an upload is in-flight.
+   */
+  addListener(
+    eventName: 'uploadProgress',
+    listenerFunc: (event: UploadCareProgressEvent) => void,
+  ): Promise<PluginListenerHandle>;
+
+  removeAllListeners(): Promise<void>;
 }
 
 /**
@@ -52,6 +73,11 @@ export interface UploadCareConfig {
  * Options for an individual upload interaction.
  */
 export interface UploadCareUploadOptions {
+  /**
+   * image | video | any (default: any)
+   */
+  mediaType?: UploadCareMediaType;
+
   /**
    * Allow selecting multiple files.
    */
@@ -113,6 +139,11 @@ export interface UploadCareUploadResult {
    * Error message, if any.
    */
   errorMessage?: string;
+
+  /**
+   * Optional: the id used for progress events.
+   */
+  uploadId?: string;
 
   /**
    * Array of uploaded file descriptors.

@@ -16,7 +16,10 @@ npx cap sync
 * [`configure(...)`](#configure)
 * [`openUploader(...)`](#openuploader)
 * [`uploadDataUri(...)`](#uploaddatauri)
+* [`addListener('uploadProgress', ...)`](#addlisteneruploadprogress-)
+* [`removeAllListeners()`](#removealllisteners)
 * [Interfaces](#interfaces)
+* [Type Aliases](#type-aliases)
 
 </docgen-index>
 
@@ -75,6 +78,33 @@ Expects a full data URI like: data:image/jpeg;base64,/9j/4AAQSk...
 --------------------
 
 
+### addListener('uploadProgress', ...)
+
+```typescript
+addListener(eventName: 'uploadProgress', listenerFunc: (event: UploadCareProgressEvent) => void) => Promise<PluginListenerHandle>
+```
+
+Upload progress events while an upload is in-flight.
+
+| Param              | Type                                                                                            |
+| ------------------ | ----------------------------------------------------------------------------------------------- |
+| **`eventName`**    | <code>'uploadProgress'</code>                                                                   |
+| **`listenerFunc`** | <code>(event: <a href="#uploadcareprogressevent">UploadCareProgressEvent</a>) =&gt; void</code> |
+
+**Returns:** <code>Promise&lt;<a href="#pluginlistenerhandle">PluginListenerHandle</a>&gt;</code>
+
+--------------------
+
+
+### removeAllListeners()
+
+```typescript
+removeAllListeners() => Promise<void>
+```
+
+--------------------
+
+
 ### Interfaces
 
 
@@ -101,6 +131,7 @@ Result from an Uploadcare upload session.
 | **`success`**      | <code>boolean</code>          | Whether the upload interaction completed successfully.                                                |
 | **`cancelled`**    | <code>boolean</code>          | If the user cancelled the picker.                                                                     |
 | **`errorMessage`** | <code>string</code>           | Error message, if any.                                                                                |
+| **`uploadId`**     | <code>string</code>           | Optional: the id used for progress events.                                                            |
 | **`files`**        | <code>UploadCareFile[]</code> | Array of uploaded file descriptors. Even when `multiple` is false, we’ll return an array of length 1. |
 
 
@@ -123,14 +154,15 @@ Metadata about a single uploaded file as returned by Uploadcare.
 
 Options for an individual upload interaction.
 
-| Prop                   | Type                  | Description                                                                                                                  |
-| ---------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| **`multiple`**         | <code>boolean</code>  | Allow selecting multiple files.                                                                                              |
-| **`allowedMimeTypes`** | <code>string[]</code> | Restrict to images, videos, etc. If omitted, use Uploadcare defaults. We’ll map this to native Uploadcare type restrictions. |
-| **`maxFiles`**         | <code>number</code>   | Max number of files when `multiple` is true.                                                                                 |
-| **`enableCrop`**       | <code>boolean</code>  | Whether to enable cropping UI (if supported by the SDK).                                                                     |
-| **`cropRatio`**        | <code>string</code>   | Preferred crop aspect ratio, like '3:2', '1:1', etc. We’ll parse and map this on native side if Uploadcare supports it.      |
-| **`maxFileSizeBytes`** | <code>number</code>   | Max file size in bytes (we can enforce in native before uploading).                                                          |
+| Prop                   | Type                                                                | Description                                                                                                                  |
+| ---------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **`mediaType`**        | <code><a href="#uploadcaremediatype">UploadCareMediaType</a></code> | image \| video \| any (default: any)                                                                                         |
+| **`multiple`**         | <code>boolean</code>                                                | Allow selecting multiple files.                                                                                              |
+| **`allowedMimeTypes`** | <code>string[]</code>                                               | Restrict to images, videos, etc. If omitted, use Uploadcare defaults. We’ll map this to native Uploadcare type restrictions. |
+| **`maxFiles`**         | <code>number</code>                                                 | Max number of files when `multiple` is true.                                                                                 |
+| **`enableCrop`**       | <code>boolean</code>                                                | Whether to enable cropping UI (if supported by the SDK).                                                                     |
+| **`cropRatio`**        | <code>string</code>                                                 | Preferred crop aspect ratio, like '3:2', '1:1', etc. We’ll parse and map this on native side if Uploadcare supports it.      |
+| **`maxFileSizeBytes`** | <code>number</code>                                                 | Max file size in bytes (we can enforce in native before uploading).                                                          |
 
 
 #### UploadCareDataUriOptions
@@ -143,6 +175,32 @@ The `dataUri` must be a full data URI string:
 | -------------- | ------------------- |
 | **`dataUri`**  | <code>string</code> |
 | **`fileName`** | <code>string</code> |
+
+
+#### PluginListenerHandle
+
+| Prop         | Type                                      |
+| ------------ | ----------------------------------------- |
+| **`remove`** | <code>() =&gt; Promise&lt;void&gt;</code> |
+
+
+#### UploadCareProgressEvent
+
+| Prop                | Type                            |
+| ------------------- | ------------------------------- |
+| **`uploadId`**      | <code>string</code>             |
+| **`progress`**      | <code>number</code>             |
+| **`bytesWritten`**  | <code>number</code>             |
+| **`contentLength`** | <code>number</code>             |
+| **`mediaType`**     | <code>'image' \| 'video'</code> |
+
+
+### Type Aliases
+
+
+#### UploadCareMediaType
+
+<code>'image' | 'video' | 'any'</code>
 
 </docgen-api>
 # capacitor-upload-care-plugin

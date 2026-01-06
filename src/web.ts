@@ -10,29 +10,50 @@ import type {
   UploadCareFile,
 } from './definitions';
 
+const IMAGE_MAX_BYTES = 8 * 1024 * 1024; // 8mb
+const VIDEO_MAX_BYTES = 512 * 1024 * 1024; // 512mb
+
+const IMAGE_MIME_ALLOW = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/heic',
+  'image/heif',
+  'image/avif',
+  'image/bmp',
+]);
+
+const VIDEO_MIME_ALLOW = new Set([
+  'video/mp4',
+  'video/quicktime', // mov
+  'video/mpeg',
+  'video/3gpp',
+  'video/x-msvideo', // avi
+]);
+
 export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
   private client: UploadClient | null = null;
 
   async configure(options: UploadCareConfig): Promise<void> {
-  if (!options.publicKey || options.publicKey.trim() === '') {
-    throw new Error('publicKey is required for Uploadcare web integration');
-  }
+    if (!options.publicKey || options.publicKey.trim() === '') {
+      throw new Error('publicKey is required for Uploadcare web integration');
+    }
 
-  this.client = new UploadClient({
-    publicKey: options.publicKey,
-    // baseCDN: options.cdnBase,
-    // baseURL: options.apiBase,
-  });
+    this.client = new UploadClient({
+      publicKey: options.publicKey,
+      // baseCDN: options.cdnBase,
+      // baseURL: options.apiBase,
+    });
 
-  if (options.debug) {
-    console.info('[CapUploadCareWeb] Configured UploadClient for web');
+    if (options.debug) {
+      console.info('[CapUploadCareWeb] Configured UploadClient for web');
+    }
   }
-}
 
   private ensureClient(): UploadClient {
     if (!this.client) {
       throw new Error(
-        '[CapUploadCareWeb] UploadClient is not configured or defined. Call CapUploadCare.configure(...) first on web.',
+        '[CapUploadCareWeb] UploadClient is not configured. Call CapUploadCare.configure(...) first on web.',
       );
     }
     return this.client;
@@ -54,22 +75,53 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
       file.mimeType = info.mimeType;
     }
 
-    // width/height are optional in your TS type; Uploadcare exposes them
-    // via image info, but we can leave them undefined for now.
-
     return file;
+  }
+
+  private validatePickedFile(file: File, mediaType: 'image' | 'video'): void {
+    const mime = (file.type || '').toLowerCase();
+
+    if (mediaType === 'image') {
+      if (!IMAGE_MIME_ALLOW.has(mime)) {
+        throw new Error(`Unsupported image format: ${mime || 'unknown'}`);
+      }
+      if (file.size > IMAGE_MAX_BYTES) {
+        throw new Error('Image exceeds max size of 8mb');
+      }
+      // Resolution checks on web require decoding; if you want it, we can add it,
+      // but it’s async and slightly heavier. Native platforms will enforce strictly.
+      return;
+    }
+
+    if (mediaType === 'video') {
+      if (!VIDEO_MIME_ALLOW.has(mime)) {
+        throw new Error(`Unsupported video format: ${mime || 'unknown'}`);
+      }
+      if (file.size > VIDEO_MAX_BYTES) {
+        throw new Error('Video exceeds max size of 512mb');
+      }
+      // Duration/resolution checks on web require loading metadata; can be added if you want.
+    }
   }
 
   async openUploader(options?: UploadCareUploadOptions): Promise<UploadCareUploadResult> {
     const client = this.ensureClient();
+    const uploadId = crypto.randomUUID();
+
+    const requested = options?.mediaType ?? 'any';
+    const accept =
+      options?.allowedMimeTypes?.length
+        ? options.allowedMimeTypes.join(',')
+        : requested === 'image'
+          ? 'image/*'
+          : requested === 'video'
+            ? 'video/*'
+            : 'image/*,video/*';
 
     return new Promise<UploadCareUploadResult>((resolve, reject) => {
       const input = document.createElement('input');
       input.type = 'file';
-
-      if (options?.allowedMimeTypes && options.allowedMimeTypes.length > 0) {
-        input.accept = options.allowedMimeTypes.join(',');
-      }
+      input.accept = accept;
 
       if (options?.multiple) {
         input.multiple = true;
@@ -94,6 +146,7 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
               success: false,
               cancelled: true,
               errorMessage: 'No file selected',
+              uploadId,
               files: [],
             });
             return;
@@ -107,14 +160,33 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
           const selected: File[] = [];
           for (let i = 0; i < maxFiles; i++) {
             const f = files.item(i);
-            if (f) {
-              selected.push(f);
-            }
+            if (f) selected.push(f);
           }
 
           const uploaded: UploadCareFile[] = [];
           for (const file of selected) {
-            const info = await client.uploadFile(file);
+            const mime = (file.type || '').toLowerCase();
+            const inferredMediaType: 'image' | 'video' =
+              mime.startsWith('video/') ? 'video' : 'image';
+
+            const effectiveMediaType: 'image' | 'video' =
+              requested === 'any' ? inferredMediaType : requested;
+
+            this.validatePickedFile(file, effectiveMediaType);
+
+            const info = await client.uploadFile(file, {
+              onProgress: (progress) => {
+                if (!progress.isComputable || typeof progress.value !== 'number') return;
+                const pct = Math.max(0, Math.min(100, Math.round(progress.value * 100)));
+
+                this.notifyListeners('uploadProgress', {
+                  uploadId,
+                  progress: pct,
+                  mediaType: effectiveMediaType,
+                });
+              },
+            });
+
             uploaded.push(this.mapUploadcareFile(info));
           }
 
@@ -123,6 +195,7 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
           resolve({
             success: true,
             cancelled: false,
+            uploadId,
             files: uploaded,
           });
         } catch (err: any) {
@@ -138,6 +211,7 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
 
   async uploadDataUri(options: UploadCareDataUriOptions): Promise<UploadCareUploadResult> {
     const client = this.ensureClient();
+    const uploadId = crypto.randomUUID();
 
     const { dataUri, fileName } = options;
 
@@ -149,13 +223,31 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
       throw new Error('fileName is required');
     }
 
+    const mimeMatch = /^data:([^;]+);base64,/.exec(dataUri);
+    const mime = (mimeMatch?.[1] ?? '').toLowerCase();
+
+    const mediaType: 'image' | 'video' = mime.startsWith('video/') ? 'video' : 'image';
+
     // Convert data URI to Blob and upload.
-    // Pattern: fetch(dataUrl).then(r => r.blob()) then client.uploadFile(blob) 
     const response = await fetch(dataUri);
     const blob = await response.blob();
 
+    // Size rules
+    if (mediaType === 'image' && blob.size > IMAGE_MAX_BYTES) {
+      throw new Error('Image exceeds max size of 8mb');
+    }
+    if (mediaType === 'video' && blob.size > VIDEO_MAX_BYTES) {
+      throw new Error('Video exceeds max size of 512mb');
+    }
+
     const info = await client.uploadFile(blob, {
       fileName,
+      contentType: mime || undefined,
+      onProgress: (progress) => {
+        if (!progress.isComputable || typeof progress.value !== 'number') return;
+        const pct = Math.max(0, Math.min(100, Math.round(progress.value * 100)));
+        this.notifyListeners('uploadProgress', { uploadId, progress: pct, mediaType });
+      },
     });
 
     const file = this.mapUploadcareFile(info);
@@ -163,6 +255,7 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
     return {
       success: true,
       cancelled: false,
+      uploadId,
       files: [file],
     };
   }
