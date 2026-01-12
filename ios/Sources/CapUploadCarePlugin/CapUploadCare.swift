@@ -1,4 +1,3 @@
-import AVFoundation
 import Foundation
 import Uploadcare
 
@@ -42,10 +41,10 @@ import Uploadcare
             withName: fileName,
             store: .auto,
             metadata: nil,
-            { progress in
-                onProgress(progress)
+            progress: { progressValue in
+                onProgress(progressValue)  // 0.0 ... 1.0
             },
-            { result in
+            completion: { result in
                 switch result {
                 case .failure(let error):
                     completion(.failure(error))
@@ -57,10 +56,9 @@ import Uploadcare
                     var fileDict: [String: Any] = [
                         "uuid": uuid,
                         "cdnUrl": cdnUrl,
+                        "filename": file.originalFilename,
+                        "sizeBytes": file.size,
                     ]
-
-                    fileDict["filename"] = file.originalFilename
-                    fileDict["sizeBytes"] = file.size
 
                     completion(.success(fileDict))
                 }
@@ -93,10 +91,10 @@ import Uploadcare
             withName: fileName,
             store: .auto,
             metadata: nil,
-            { progress in
-                onProgress(progress)
+            progress: { progressValue in
+                onProgress(progressValue)  // 0.0 ... 1.0
             },
-            { result in
+            completion: { result in
                 switch result {
                 case .failure(let error):
                     completion(.failure(error))
@@ -108,10 +106,9 @@ import Uploadcare
                     var fileDict: [String: Any] = [
                         "uuid": uuid,
                         "cdnUrl": cdnUrl,
+                        "filename": file.originalFilename,
+                        "sizeBytes": file.size,
                     ]
-
-                    fileDict["filename"] = file.originalFilename
-                    fileDict["sizeBytes"] = file.size
 
                     completion(.success(fileDict))
                 }

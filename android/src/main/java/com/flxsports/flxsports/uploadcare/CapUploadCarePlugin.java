@@ -65,7 +65,6 @@ public class CapUploadCarePlugin extends Plugin {
         }
 
         mediaType = mediaType.toLowerCase(Locale.US);
-        mediaType = mediaType.toLowerCase(Locale.US);
 
         Intent intent = new Intent(Intent.ACTION_PICK);
 
@@ -119,16 +118,22 @@ public class CapUploadCarePlugin extends Plugin {
         }
 
         final String uploadId = UUID.randomUUID().toString();
+        final String finalMimeType = mimeType; // <- make it effectively final for lambdas
 
-        implementation.uploadDataBytes(bytes, fileName, mimeType, (bytesWritten, contentLength, percent) -> {
+        implementation.uploadDataBytes(bytes, fileName, finalMimeType, (bytesWritten, contentLength, percent) -> {
             JSObject evt = new JSObject();
             evt.put("uploadId", uploadId);
             evt.put("progress", percent);
             evt.put("bytesWritten", bytesWritten);
             evt.put("contentLength", contentLength);
-            if (mimeType != null) {
-                evt.put("mediaType", mimeType.toLowerCase(Locale.US).startsWith("video/") ? "video" : "image");
+
+            if (finalMimeType != null) {
+                evt.put(
+                    "mediaType",
+                    finalMimeType.toLowerCase(Locale.US).startsWith("video/") ? "video" : "image"
+                );
             }
+
             notifyListeners("uploadProgress", evt);
         }, new CapUploadCare.UploadCallback() {
             @Override
@@ -201,17 +206,19 @@ public class CapUploadCarePlugin extends Plugin {
 
         mediaType = mediaType.toLowerCase(Locale.US);
 
+        final String finalMediaType = mediaType;
+
         Context context = getContext();
         final String uploadId = UUID.randomUUID().toString();
 
-        implementation.uploadSingle(context, uri, mediaType, (bytesWritten, contentLength, percent) -> {
+        implementation.uploadSingle(context, uri, finalMediaType, (bytesWritten, contentLength, percent) -> {
             JSObject evt = new JSObject();
             evt.put("uploadId", uploadId);
             evt.put("progress", percent);
             evt.put("bytesWritten", bytesWritten);
             evt.put("contentLength", contentLength);
 
-            String mt = mediaType.toLowerCase(Locale.US);
+            String mt = finalMediaType.toLowerCase(Locale.US);
             if (mt.equals("image") || mt.equals("video")) {
                 evt.put("mediaType", mt);
             }
