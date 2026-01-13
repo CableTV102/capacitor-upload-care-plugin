@@ -22,7 +22,6 @@ export interface LocalPickedMedia {
   durationMs?: number;
 }
 
-
 export interface PickMediaOptions {
   mediaType?: UploadCareMediaType; // image | video | any
 }
@@ -61,7 +60,7 @@ export interface CapUploadCarePlugin {
    * Expects a full data URI like: data:image/jpeg;base64,/9j/4AAQSk...
    */
   uploadPicked(options: UploadPickedOptions): Promise<UploadCareUploadResult>;
-  
+
   /**
    * Upload progress events while an upload is in-flight.
    */
