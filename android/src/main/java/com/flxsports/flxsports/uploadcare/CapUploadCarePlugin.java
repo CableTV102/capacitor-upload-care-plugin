@@ -19,10 +19,12 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 @CapacitorPlugin(name = "CapUploadCare")
 public class CapUploadCarePlugin extends Plugin {
-
+    private final Map<String, Uri> pickedById = new ConcurrentHashMap<>();
+    private final Map<String, String> pickedTypeById = new ConcurrentHashMap<>();
     private final CapUploadCare implementation = new CapUploadCare();
     private PluginCall pendingCall;
 
@@ -167,6 +169,106 @@ public class CapUploadCarePlugin extends Plugin {
         });
     }
 
+    @PluginMethod
+public void uploadPicked(PluginCall call) {
+    String localId = call.getString("localId");
+    String fileName = call.getString("fileName");
+
+    if (localId == null || localId.isEmpty()) {
+        call.reject("localId is required");
+        return;
+    }
+    if (fileName == null || fileName.isEmpty()) {
+        call.reject("fileName is required");
+        return;
+    }
+
+    Uri uri = pickedById.get(localId);
+    String mediaType = pickedTypeById.get(localId);
+
+    if (uri == null || mediaType == null) {
+        call.reject("Unknown localId (maybe app restarted). Pick media again.");
+        return;
+    }
+
+    final String uploadId = UUID.randomUUID().toString();
+    final String finalMediaType = mediaType;
+
+    implementation.uploadUri(getContext(), uri, finalMediaType, fileName,
+            (bytesWritten, contentLength, percent) -> {
+                JSObject evt = new JSObject();
+                evt.put("uploadId", uploadId);
+                evt.put("progress", percent);
+                evt.put("bytesWritten", bytesWritten);
+                evt.put("contentLength", contentLength);
+                evt.put("mediaType", finalMediaType);
+                notifyListeners("uploadProgress", evt);
+            },
+            new CapUploadCare.UploadCallback() {
+                @Override
+                public void onSuccess(Map<String, Object> fileMap) {
+                    JSObject fileObj = new JSObject();
+                    fileObj.put("uuid", fileMap.get("uuid"));
+                    fileObj.put("cdnUrl", fileMap.get("cdnUrl"));
+                    if (fileMap.containsKey("filename")) fileObj.put("filename", fileMap.get("filename"));
+                    if (fileMap.containsKey("sizeBytes")) fileObj.put("sizeBytes", fileMap.get("sizeBytes"));
+                    if (fileMap.containsKey("mimeType")) fileObj.put("mimeType", fileMap.get("mimeType"));
+                    if (fileMap.containsKey("width")) fileObj.put("width", fileMap.get("width"));
+                    if (fileMap.containsKey("height")) fileObj.put("height", fileMap.get("height"));
+
+                    JSArray files = new JSArray();
+                    files.put(fileObj);
+
+                    JSObject ret = new JSObject();
+                    ret.put("success", true);
+                    ret.put("cancelled", false);
+                    ret.put("uploadId", uploadId);
+                    ret.put("files", files);
+
+                    call.resolve(ret);
+
+                    // optional: clear once uploaded
+                    pickedById.remove(localId);
+                    pickedTypeById.remove(localId);
+                }
+
+                @Override
+                public void onError(Exception error) {
+                    call.reject(error.getMessage(), error);
+                }
+            }
+    );
+}
+
+    @PluginMethod
+    public void pickMedia(PluginCall call) {
+        if (pendingCall != null) {
+            call.reject("A picker flow is already in progress");
+            return;
+        }
+
+        String mediaType = null;
+        JSObject options = call.getObject("options");
+        if (options != null) mediaType = options.getString("mediaType");
+        if (mediaType == null || mediaType.trim().isEmpty()) mediaType = "any";
+        mediaType = mediaType.toLowerCase(Locale.US);
+
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+
+        if (mediaType.equals("image")) {
+            intent.setType("image/*");
+        } else if (mediaType.equals("video")) {
+            intent.setType("video/*");
+        } else {
+            intent.setType("*/*");
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
+        }
+
+        pendingCall = call;
+        startActivityForResult(call, intent, "handlePickMediaResult");
+    }
+
     @ActivityCallback
     private void handlePickerResult(PluginCall call, ActivityResult result) {
         if (pendingCall == null) return;
@@ -254,5 +356,64 @@ public class CapUploadCarePlugin extends Plugin {
                 savedCall.reject(error.getMessage(), error);
             }
         });
+    }
+    
+    @ActivityCallback
+    private void handlePickMediaResult(PluginCall call, ActivityResult result) {
+        if (pendingCall == null) return;
+
+        PluginCall savedCall = pendingCall;
+        pendingCall = null;
+
+        if (result.getResultCode() == Activity.RESULT_CANCELED || result.getData() == null) {
+            savedCall.reject("User cancelled");
+            return;
+        }
+
+        Uri uri = result.getData().getData();
+        if (uri == null) {
+            savedCall.reject("No file selected");
+            return;
+        }
+
+        // Persist read permission so you can upload later
+        try {
+            final int takeFlags = result.getData().getFlags()
+                    & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            getContext().getContentResolver().takePersistableUriPermission(uri, takeFlags);
+        } catch (Exception ignored) { }
+
+        Context context = getContext();
+        String mime = context.getContentResolver().getType(uri);
+        String inferredType = (mime != null && mime.toLowerCase(Locale.US).startsWith("video/")) ? "video" : "image";
+
+        // Validate and extract metadata
+        CapUploadCare.ValidationResult vr;
+        if (inferredType.equals("video")) {
+            vr = implementation.validateVideo(context, uri);
+        } else {
+            vr = implementation.validateImage(context, uri);
+        }
+        if (!vr.ok) {
+            savedCall.reject(vr.errorMessage);
+            return;
+        }
+
+        String localId = UUID.randomUUID().toString();
+        pickedById.put(localId, uri);
+        pickedTypeById.put(localId, inferredType);
+
+        JSObject ret = new JSObject();
+        ret.put("localId", localId);
+        ret.put("uri", uri.toString());
+        ret.put("mediaType", inferredType);
+        if (vr.mimeType != null) ret.put("mimeType", vr.mimeType);
+        if (vr.displayName != null) ret.put("displayName", vr.displayName);
+        if (vr.sizeBytes >= 0) ret.put("sizeBytes", vr.sizeBytes);
+        if (vr.width != null) ret.put("width", vr.width);
+        if (vr.height != null) ret.put("height", vr.height);
+        if (vr.durationMs != null) ret.put("durationMs", vr.durationMs);
+
+        savedCall.resolve(ret);
     }
 }

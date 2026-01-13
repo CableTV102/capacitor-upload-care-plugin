@@ -2,6 +2,7 @@ import AVFoundation
 import Capacitor
 import Foundation
 import UIKit
+import UniformTypeIdentifiers
 
 @objc(CapUploadCarePlugin)
 public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
@@ -12,10 +13,24 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "configure", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openUploader", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "uploadDataUri", returnType: CAPPluginReturnPromise),
+
+        // New staged workflow
+        CAPPluginMethod(name: "pickMedia", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "uploadPicked", returnType: CAPPluginReturnPromise),
     ]
 
     private let implementation = CapUploadCare()
     private var pendingCall: CAPPluginCall?
+
+    private enum PendingMode {
+        case openUploader(options: [String: Any])
+        case pickMedia(options: [String: Any])
+    }
+    private var pendingMode: PendingMode?
+
+    // localId -> temp file URL we control (stable for later upload)
+    private var pickedById: [String: URL] = [:]
+    private var pickedTypeById: [String: String] = [:]  // "image" | "video"
 
     private var debugEnabled = false
 
@@ -34,6 +49,8 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
     private static let allowedVideoExts: Set<String> = [
         "mp4", "mov", "mpeg", "mpg", "3gp", "avi", "m4v",
     ]
+
+    // MARK: - Public API
 
     @objc func configure(_ call: CAPPluginCall) {
         guard let publicKey = call.getString("publicKey"), !publicKey.isEmpty else {
@@ -57,6 +74,7 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
         call.resolve()
     }
 
+    // Existing: pick + upload immediately (kept for backcompat)
     @objc func openUploader(_ call: CAPPluginCall) {
         if pendingCall != nil {
             call.reject("An upload is already in progress")
@@ -64,32 +82,51 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         let options = call.getObject("options") ?? [:]
-        let allowedMimeTypes = options["allowedMimeTypes"] as? [String] ?? []
-        let wantsVideo =
-            allowedMimeTypes.contains { $0.lowercased().hasPrefix("video/") }
-            || allowedMimeTypes.contains("video/*")
+        pendingCall = call
+        pendingMode = .openUploader(options: options)
+        presentPicker(options: options, call: call)
+    }
 
-        DispatchQueue.main.async {
-            guard let viewController = self.bridge?.viewController else {
-                call.reject("No active view controller to present uploader")
-                return
-            }
+    // New: pick without upload
+    @objc func pickMedia(_ call: CAPPluginCall) {
+        if pendingCall != nil {
+            call.reject("A picker is already in progress")
+            return
+        }
 
-            let picker = UIImagePickerController()
-            picker.sourceType = .photoLibrary
-            picker.delegate = self
+        let options = call.getObject("options") ?? [:]
+        pendingCall = call
+        pendingMode = .pickMedia(options: options)
+        presentPicker(options: options, call: call)
+    }
 
-            if wantsVideo {
-                picker.mediaTypes = ["public.movie"]
-            } else {
-                picker.mediaTypes = ["public.image"]
-            }
+    // New: upload later using localId from pickMedia
+    @objc func uploadPicked(_ call: CAPPluginCall) {
+        guard let localId = call.getString("localId"), !localId.isEmpty else {
+            call.reject("localId is required")
+            return
+        }
 
-            self.pendingCall = call
-            viewController.present(picker, animated: true)
+        guard let fileName = call.getString("fileName"), !fileName.isEmpty else {
+            call.reject("fileName is required")
+            return
+        }
+
+        guard let url = pickedById[localId],
+            let mediaType = pickedTypeById[localId]
+        else {
+            call.reject("No picked media found for localId: \(localId)")
+            return
+        }
+
+        if mediaType == "image" {
+            validateAndUploadImage(imageUrl: url, fileName: fileName, call: call)
+        } else {
+            validateAndUploadVideo(videoUrl: url, fileName: fileName, call: call)
         }
     }
 
+    // Existing: upload a base64 data URI
     @objc func uploadDataUri(_ call: CAPPluginCall) {
         guard let dataUri = call.getString("dataUri"), !dataUri.isEmpty else {
             call.reject("dataUri is required")
@@ -152,7 +189,6 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
                 switch result {
                 case .failure(let error):
                     call.reject(error.localizedDescription)
-
                 case .success(let fileDict):
                     call.resolve([
                         "success": true,
@@ -163,6 +199,65 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
                 }
             }
         )
+    }
+
+    // MARK: - Picker presentation
+
+    private func presentPicker(options: [String: Any], call: CAPPluginCall) {
+        let mediaTypeOpt =
+            (options["mediaType"] as? String)?.lowercased()
+            ?? call.getString("mediaType")?.lowercased()
+            ?? "any"
+
+        DispatchQueue.main.async {
+            guard let viewController = self.bridge?.viewController else {
+                call.reject("No active view controller to present picker")
+                self.pendingCall = nil
+                self.pendingMode = nil
+                return
+            }
+
+            let picker = UIImagePickerController()
+            picker.sourceType = .photoLibrary
+            picker.delegate = self
+
+            if mediaTypeOpt == "video" {
+                picker.mediaTypes = ["public.movie"]
+            } else if mediaTypeOpt == "image" {
+                picker.mediaTypes = ["public.image"]
+            } else {
+                picker.mediaTypes = ["public.image", "public.movie"]
+            }
+
+            viewController.present(picker, animated: true)
+        }
+    }
+
+    // MARK: - Local staging helpers
+
+    private func copyToTemp(originalUrl: URL) throws -> URL {
+        let ext = originalUrl.pathExtension.isEmpty ? "bin" : originalUrl.pathExtension
+        let outUrl = FileManager.default.temporaryDirectory
+            .appendingPathComponent("capuploadcare-\(UUID().uuidString).\(ext)")
+
+        if FileManager.default.fileExists(atPath: outUrl.path) {
+            try FileManager.default.removeItem(at: outUrl)
+        }
+
+        try FileManager.default.copyItem(at: originalUrl, to: outUrl)
+        return outUrl
+    }
+
+    private func mimeTypeForUrl(_ url: URL) -> String? {
+        if #available(iOS 14.0, *) {
+            let ext = url.pathExtension
+            if let ut = UTType(filenameExtension: ext),
+                let mime = ut.preferredMIMEType
+            {
+                return mime
+            }
+        }
+        return nil
     }
 
     private func fileSizeBytes(for url: URL) -> Int64? {
@@ -179,7 +274,33 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
         return url.pathExtension.lowercased()
     }
 
-    private func validateAndUploadImage(imageUrl: URL, call: CAPPluginCall) {
+    private func imageDimensions(for url: URL) -> (w: Int, h: Int)? {
+        guard let data = try? Data(contentsOf: url),
+            let image = UIImage(data: data)
+        else { return nil }
+        return (Int(image.size.width), Int(image.size.height))
+    }
+
+    private func videoMetadata(for url: URL) -> (w: Int?, h: Int?, durationMs: Int?) {
+        let asset = AVURLAsset(url: url)
+        let durationSeconds = CMTimeGetSeconds(asset.duration)
+        let durationMs: Int? =
+            (durationSeconds.isFinite && !durationSeconds.isNaN)
+            ? Int(durationSeconds * 1000.0)
+            : nil
+
+        var dims: CGSize?
+        if let track = asset.tracks(withMediaType: .video).first {
+            let size = track.naturalSize.applying(track.preferredTransform)
+            dims = CGSize(width: abs(size.width), height: abs(size.height))
+        }
+
+        return (dims.map { Int($0.width) }, dims.map { Int($0.height) }, durationMs)
+    }
+
+    // MARK: - Validation + upload (now accepts caller-provided fileName)
+
+    private func validateAndUploadImage(imageUrl: URL, fileName: String, call: CAPPluginCall) {
         let ext = extLowercased(for: imageUrl)
         if !Self.allowedImageExts.contains(ext) {
             call.reject("Unsupported image format: .\(ext)")
@@ -221,8 +342,6 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
                 "progress": 0,
             ])
 
-        let fileName = "image-\(Int(Date().timeIntervalSince1970)).\(ext)"
-
         implementation.upload(
             fileUrl: imageUrl,
             fileName: fileName,
@@ -240,7 +359,6 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
                 switch result {
                 case .failure(let error):
                     call.reject(error.localizedDescription)
-
                 case .success(let fileDict):
                     call.resolve([
                         "success": true,
@@ -260,15 +378,18 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     private func transcodeTo1080IfNeeded(
-        inputUrl: URL, completion: @escaping (Result<URL, Error>) -> Void
+        inputUrl: URL,
+        completion: @escaping (Result<URL, Error>) -> Void
     ) {
         let asset = AVURLAsset(url: inputUrl)
         guard let dims = assetDimensions(asset) else {
             completion(
                 .failure(
                     NSError(
-                        domain: "CapUploadCare", code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "Could not read video dimensions"])))
+                        domain: "CapUploadCare",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Could not read video dimensions"]
+                    )))
             return
         }
 
@@ -280,16 +401,20 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
 
         guard
             let export = AVAssetExportSession(
-                asset: asset, presetName: AVAssetExportPreset1920x1080)
+                asset: asset,
+                presetName: AVAssetExportPreset1920x1080
+            )
         else {
             completion(
                 .failure(
                     NSError(
-                        domain: "CapUploadCare", code: 2,
+                        domain: "CapUploadCare",
+                        code: 2,
                         userInfo: [
                             NSLocalizedDescriptionKey:
                                 "Could not create export session for transcoding"
-                        ])))
+                        ]
+                    )))
             return
         }
 
@@ -309,25 +434,31 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
                     .failure(
                         export.error
                             ?? NSError(
-                                domain: "CapUploadCare", code: 3,
-                                userInfo: [NSLocalizedDescriptionKey: "Transcoding failed"])))
+                                domain: "CapUploadCare",
+                                code: 3,
+                                userInfo: [NSLocalizedDescriptionKey: "Transcoding failed"]
+                            )))
             case .cancelled:
                 completion(
                     .failure(
                         NSError(
-                            domain: "CapUploadCare", code: 4,
-                            userInfo: [NSLocalizedDescriptionKey: "Transcoding cancelled"])))
+                            domain: "CapUploadCare",
+                            code: 4,
+                            userInfo: [NSLocalizedDescriptionKey: "Transcoding cancelled"]
+                        )))
             default:
                 completion(
                     .failure(
                         NSError(
-                            domain: "CapUploadCare", code: 5,
-                            userInfo: [NSLocalizedDescriptionKey: "Transcoding did not complete"])))
+                            domain: "CapUploadCare",
+                            code: 5,
+                            userInfo: [NSLocalizedDescriptionKey: "Transcoding did not complete"]
+                        )))
             }
         }
     }
 
-    private func validateAndUploadVideo(videoUrl: URL, call: CAPPluginCall) {
+    private func validateAndUploadVideo(videoUrl: URL, fileName: String, call: CAPPluginCall) {
         let ext = extLowercased(for: videoUrl)
         if !Self.allowedVideoExts.contains(ext) {
             call.reject("Unsupported video format: .\(ext)")
@@ -376,20 +507,15 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
             switch result {
             case .failure(let error):
                 call.reject(error.localizedDescription)
-
             case .success(let outputUrl):
-                if let bytes = self.fileSizeBytes(for: outputUrl) {
-                    if bytes > Self.videoMaxBytes {
-                        call.reject("Video is too large. Max size is 512MB.")
-                        return
-                    }
-                } else {
+                guard let bytes = self.fileSizeBytes(for: outputUrl) else {
                     call.reject("Could not read transcoded video file size")
                     return
                 }
-
-                let fileName =
-                    "video-\(Int(Date().timeIntervalSince1970)).\(self.extLowercased(for: outputUrl))"
+                if bytes > Self.videoMaxBytes {
+                    call.reject("Video is too large. Max size is 512MB.")
+                    return
+                }
 
                 self.implementation.upload(
                     fileUrl: outputUrl,
@@ -408,7 +534,6 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
                         switch uploadResult {
                         case .failure(let uploadError):
                             call.reject(uploadError.localizedDescription)
-
                         case .success(let fileDict):
                             call.resolve([
                                 "success": true,
@@ -424,17 +549,22 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
     }
 }
 
+// MARK: - Picker Delegate
+
 extension CapUploadCarePlugin: UIImagePickerControllerDelegate, UINavigationControllerDelegate {
     public func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
         picker.dismiss(animated: true)
 
         guard let call = pendingCall else { return }
+
         call.resolve([
             "success": false,
             "cancelled": true,
             "files": [],
         ])
+
         pendingCall = nil
+        pendingMode = nil
     }
 
     public func imagePickerController(
@@ -443,19 +573,79 @@ extension CapUploadCarePlugin: UIImagePickerControllerDelegate, UINavigationCont
     ) {
         picker.dismiss(animated: true)
 
-        guard let call = pendingCall else { return }
+        guard let call = pendingCall,
+            let mode = pendingMode
+        else {
+            return
+        }
+
         pendingCall = nil
+        pendingMode = nil
 
         if let imageUrl = info[.imageURL] as? URL {
-            validateAndUploadImage(imageUrl: imageUrl, call: call)
+            handlePicked(url: imageUrl, mediaType: "image", call: call, mode: mode)
             return
         }
 
         if let videoUrl = info[.mediaURL] as? URL {
-            validateAndUploadVideo(videoUrl: videoUrl, call: call)
+            handlePicked(url: videoUrl, mediaType: "video", call: call, mode: mode)
             return
         }
 
         call.reject("No media URL returned from picker")
+    }
+
+    private func handlePicked(url: URL, mediaType: String, call: CAPPluginCall, mode: PendingMode) {
+        do {
+            let tempUrl = try copyToTemp(originalUrl: url)
+
+            switch mode {
+            case .pickMedia:
+                let localId = UUID().uuidString
+
+                pickedById[localId] = tempUrl
+                pickedTypeById[localId] = mediaType
+
+                var payload: [String: Any] = [
+                    "localId": localId,
+                    "uri": tempUrl.absoluteString,  // file://...
+                    "mediaType": mediaType,
+                ]
+
+                if let mime = mimeTypeForUrl(tempUrl) {
+                    payload["mimeType"] = mime
+                }
+                if let size = fileSizeBytes(for: tempUrl) {
+                    payload["sizeBytes"] = size
+                }
+
+                if mediaType == "image" {
+                    if let dims = imageDimensions(for: tempUrl) {
+                        payload["width"] = dims.w
+                        payload["height"] = dims.h
+                    }
+                } else {
+                    let meta = videoMetadata(for: tempUrl)
+                    if let w = meta.w { payload["width"] = w }
+                    if let h = meta.h { payload["height"] = h }
+                    if let d = meta.durationMs { payload["durationMs"] = d }
+                }
+
+                call.resolve(payload)
+
+            case .openUploader:
+                // Maintain old flow: upload immediately with generated name
+                let ext = extLowercased(for: tempUrl)
+                let generatedName = "\(mediaType)-\(Int(Date().timeIntervalSince1970)).\(ext)"
+
+                if mediaType == "image" {
+                    validateAndUploadImage(imageUrl: tempUrl, fileName: generatedName, call: call)
+                } else {
+                    validateAndUploadVideo(videoUrl: tempUrl, fileName: generatedName, call: call)
+                }
+            }
+        } catch {
+            call.reject(error.localizedDescription)
+        }
     }
 }

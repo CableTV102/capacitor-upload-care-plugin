@@ -2,15 +2,18 @@ import { registerPlugin } from '@capacitor/core';
 
 import type {
   CapUploadCarePlugin,
+  LocalPickedMedia,
+  PickMediaOptions,
   UploadCareUploadOptions,
   UploadCareUploadResult,
   UploadCareFile,
   UploadCareDataUriOptions,
-  UploadCareProgressEvent
+  UploadCareProgressEvent,
+  UploadPickedOptions,
 } from './definitions';
 
 const CapUploadCare = registerPlugin<CapUploadCarePlugin>('CapUploadCare', {
-  web: () => import('./web').then(m => new m.CapUploadCareWeb()),
+  web: () => import('./web').then((m) => new m.CapUploadCareWeb()),
 });
 
 export * from './definitions';
@@ -43,44 +46,6 @@ export async function selectAndUploadImage(
   return result.files[0];
 }
 
-/**
- * Convenience helper to upload an existing base64 data URI.
- * - Expects a full data URI: data:image/jpeg;base64,...
- * - Returns the first uploaded file
- * - Throws on error or if no file is returned
- */
-export async function uploadDataUriImage(
-  options: UploadCareDataUriOptions,
-): Promise<UploadCareFile> {
-  const result: UploadCareUploadResult = await CapUploadCare.uploadDataUri(options);
-
-  const cancelled = result.cancelled ?? false;
-  const hasFiles = Array.isArray(result.files) && result.files.length > 0;
-
-  const success =
-    typeof result.success === 'boolean'
-      ? result.success
-      : !cancelled && hasFiles;
-
-  if (cancelled) {
-    throw new Error('Upload was cancelled');
-  }
-
-  if (!success || !hasFiles) {
-    const message = result.errorMessage ?? 'Upload has failed or no file returned';
-    throw new Error(message);
-  }
-
-  return result.files[0];
-}
-
-/**
- * Convenience helper:
- * - Forces the native picker into video mode via allowedMimeTypes
- * - Returns the first uploaded file
- * - Returns null if the user cancelled
- * - Throws on error
- */
 export async function selectAndUploadVideo(
   options?: UploadCareUploadOptions,
 ): Promise<UploadCareFile | null> {
@@ -101,11 +66,30 @@ export async function selectAndUploadVideo(
   return result.files[0];
 }
 
-/**
- * Convenience helper:
- * - Upload an existing base64 data URI (works for both images and videos)
- * - Named "Video" so your app code reads cleanly where you use it
- */
+export async function uploadDataUriImage(
+  options: UploadCareDataUriOptions,
+): Promise<UploadCareFile> {
+  const result: UploadCareUploadResult = await CapUploadCare.uploadDataUri(options);
+
+  const cancelled = result.cancelled ?? false;
+  const hasFiles = Array.isArray(result.files) && result.files.length > 0;
+
+  const success =
+    typeof result.success === 'boolean'
+      ? result.success
+      : !cancelled && hasFiles;
+
+  if (cancelled) {
+    throw new Error('Upload was cancelled');
+  }
+
+  if (!success || !hasFiles) {
+    throw new Error(result.errorMessage ?? 'Upload has failed or no file returned');
+  }
+
+  return result.files[0];
+}
+
 export async function uploadDataUriVideo(
   options: UploadCareDataUriOptions,
 ): Promise<UploadCareFile> {
@@ -124,17 +108,33 @@ export async function uploadDataUriVideo(
   }
 
   if (!success || !hasFiles) {
-    const message = result.errorMessage ?? 'Upload has failed or no file returned';
-    throw new Error(message);
+    throw new Error(result.errorMessage ?? 'Upload has failed or no file returned');
   }
 
   return result.files[0];
 }
 
 /**
- * Convenience helper:
+ * New flow: pick now, upload later.
+ * - Returns LocalPickedMedia (localId + local uri for preview)
+ */
+export async function pickMedia(
+  options?: PickMediaOptions,
+): Promise<LocalPickedMedia> {
+  return CapUploadCare.pickMedia(options);
+}
+
+/**
+ * New flow: upload something you picked earlier, using localId
+ */
+export async function uploadPicked(
+  options: UploadPickedOptions,
+): Promise<UploadCareUploadResult> {
+  return CapUploadCare.uploadPicked(options);
+}
+
+/**
  * Listen for native upload progress events (0..100).
- * Your native side emits: notifyListeners("uploadProgress", { uploadId, progress })
  */
 export async function addUploadProgressListener(
   listener: (e: UploadCareProgressEvent) => void,

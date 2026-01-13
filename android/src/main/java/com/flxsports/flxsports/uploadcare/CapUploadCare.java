@@ -147,7 +147,7 @@ public class CapUploadCare {
         return -1L;
     }
 
-    private ValidationResult validateImage(Context context, Uri uri) {
+    public ValidationResult validateImage(Context context, Uri uri) {
         String mime = context.getContentResolver().getType(uri);
         if (!isAllowedImageMime(mime)) {
             return new ValidationResult(false, "Unsupported image format: " + (mime == null ? "unknown" : mime), mime, null, -1, null, null, null);
@@ -195,7 +195,7 @@ public class CapUploadCare {
         return new ValidationResult(true, null, mime, displayName, size, w, h, null);
     }
 
-    private ValidationResult validateVideo(Context context, Uri uri) {
+    public ValidationResult validateVideo(Context context, Uri uri) {
         String mime = context.getContentResolver().getType(uri);
         if (!isAllowedVideoMime(mime)) {
             return new ValidationResult(false, "Unsupported video format: " + (mime == null ? "unknown" : mime), mime, null, -1, null, null, null);
@@ -357,6 +357,86 @@ public class CapUploadCare {
             }
         });
     }
+
+    public void uploadUri(
+        Context context,
+        Uri uri,
+        String mediaType,
+        String fileName,
+        ProgressCallback progressCallback,
+        UploadCallback callback
+) {
+    if (client == null) {
+        callback.onError(new IllegalStateException("Uploadcare client is not configured"));
+        return;
+    }
+
+    // Reuse your validation logic
+    String mt = (mediaType == null ? "any" : mediaType.toLowerCase(Locale.US));
+    ValidationResult vr;
+
+    if (mt.equals("image")) {
+        vr = validateImage(context, uri);
+    } else if (mt.equals("video")) {
+        vr = validateVideo(context, uri);
+    } else {
+        String mime = context.getContentResolver().getType(uri);
+        if (mime != null && mime.toLowerCase(Locale.US).startsWith("video/")) {
+            vr = validateVideo(context, uri);
+        } else {
+            vr = validateImage(context, uri);
+        }
+    }
+
+    if (!vr.ok) {
+        callback.onError(new IllegalArgumentException(vr.errorMessage));
+        return;
+    }
+
+    FileUploader uploader = new FileUploader(client, uri, context)
+            .store(true)
+            .withFilename(fileName);
+
+    uploader.uploadAsync(new UploadFileCallback() {
+        @Override
+        public void onFailure(UploadcareApiException e) {
+            if (debug) Logger.error(TAG, "Upload failed: " + e.getMessage(), e);
+            callback.onError(e);
+        }
+
+        @Override
+        public void onProgressUpdate(long bytesWritten, long contentLength, double progress) {
+            if (contentLength > 0) {
+                int percent = (int) Math.round(progress * 100.0);
+                if (progressCallback != null) {
+                    progressCallback.onProgress(bytesWritten, contentLength, percent);
+                }
+            }
+        }
+
+        @Override
+        public void onSuccess(UploadcareFile file) {
+            String uuid = file.getUuid();
+            String cdnUrl = (file.getOriginalFileUrl() != null)
+                    ? file.getOriginalFileUrl().toString()
+                    : "https://ucarecdn.com/" + uuid + "/";
+
+            Map<String, Object> map = new HashMap<>();
+            map.put("uuid", uuid);
+            map.put("cdnUrl", cdnUrl);
+
+            if (file.getOriginalFilename() != null) map.put("filename", file.getOriginalFilename());
+            int size = file.getSize();
+            if (size > 0) map.put("sizeBytes", size);
+            if (file.getMimeType() != null) map.put("mimeType", file.getMimeType());
+
+            if (vr.width != null) map.put("width", vr.width);
+            if (vr.height != null) map.put("height", vr.height);
+
+            callback.onSuccess(map);
+        }
+    });
+}
 
     public void uploadSingle(
             Context context,

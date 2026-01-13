@@ -23,6 +23,7 @@ import Uploadcare
     enum UploadError: Error {
         case notConfigured
         case invalidFileUrl
+        case couldNotCreateUploadFile
     }
 
     public func upload(
@@ -36,34 +37,32 @@ import Uploadcare
             return
         }
 
+        // Important: Uploadcare 0.14 uses two closures where the second is "_:"
         _ = uploadcare.uploadFile(
             data,
             withName: fileName,
             store: .auto,
-            metadata: nil,
-            progress: { progressValue in
-                onProgress(progressValue)  // 0.0 ... 1.0
-            },
-            completion: { result in
-                switch result {
-                case .failure(let error):
-                    completion(.failure(error))
+            metadata: nil
+        ) { progressValue in
+            onProgress(progressValue)  // 0.0 ... 1.0
+        } _: { result in
+            switch result {
+            case .failure(let error):
+                completion(.failure(error))
+            case .success(let file):
+                let uuid = file.uuid
+                let cdnUrl = "https://ucarecdn.com/\(uuid)/"
 
-                case .success(let file):
-                    let uuid = file.uuid
-                    let cdnUrl = "https://ucarecdn.com/\(uuid)/"
+                var fileDict: [String: Any] = [
+                    "uuid": uuid,
+                    "cdnUrl": cdnUrl,
+                    "filename": file.originalFilename as Any,
+                    "sizeBytes": file.size as Any,
+                ]
 
-                    var fileDict: [String: Any] = [
-                        "uuid": uuid,
-                        "cdnUrl": cdnUrl,
-                        "filename": file.originalFilename,
-                        "sizeBytes": file.size,
-                    ]
-
-                    completion(.success(fileDict))
-                }
+                completion(.success(fileDict))
             }
-        )
+        }
     }
 
     public func upload(
@@ -83,36 +82,33 @@ import Uploadcare
         }
 
         guard let fileForUploading = uploadcare.file(withContentsOf: fileUrl) else {
-            completion(.failure(UploadError.invalidFileUrl))
+            completion(.failure(UploadError.couldNotCreateUploadFile))
             return
         }
 
         _ = fileForUploading.upload(
             withName: fileName,
             store: .auto,
-            metadata: nil,
-            progress: { progressValue in
-                onProgress(progressValue)  // 0.0 ... 1.0
-            },
-            completion: { result in
-                switch result {
-                case .failure(let error):
-                    completion(.failure(error))
+            metadata: nil
+        ) { progressValue in
+            onProgress(progressValue)  // 0.0 ... 1.0
+        } _: { result in
+            switch result {
+            case .failure(let error):
+                completion(.failure(error))
+            case .success(let file):
+                let uuid = file.uuid
+                let cdnUrl = "https://ucarecdn.com/\(uuid)/"
 
-                case .success(let file):
-                    let uuid = file.uuid
-                    let cdnUrl = "https://ucarecdn.com/\(uuid)/"
+                let fileDict: [String: Any] = [
+                    "uuid": uuid,
+                    "cdnUrl": cdnUrl,
+                    "filename": file.originalFilename as Any,
+                    "sizeBytes": file.size as Any,
+                ]
 
-                    var fileDict: [String: Any] = [
-                        "uuid": uuid,
-                        "cdnUrl": cdnUrl,
-                        "filename": file.originalFilename,
-                        "sizeBytes": file.size,
-                    ]
-
-                    completion(.success(fileDict))
-                }
+                completion(.success(fileDict))
             }
-        )
+        }
     }
 }

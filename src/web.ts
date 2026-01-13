@@ -3,11 +3,14 @@ import { UploadClient } from '@uploadcare/upload-client';
 
 import type {
   CapUploadCarePlugin,
+  LocalPickedMedia,
+  PickMediaOptions,
   UploadCareConfig,
-  UploadCareUploadOptions,
-  UploadCareUploadResult,
   UploadCareDataUriOptions,
   UploadCareFile,
+  UploadCareUploadOptions,
+  UploadCareUploadResult,
+  UploadPickedOptions,
 } from './definitions';
 
 const IMAGE_MAX_BYTES = 8 * 1024 * 1024; // 8mb
@@ -31,8 +34,16 @@ const VIDEO_MIME_ALLOW = new Set([
   'video/x-msvideo', // avi
 ]);
 
+type MediaType = 'image' | 'video';
+
 export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
   private client: UploadClient | null = null;
+
+  // For web deferred uploads: store the picked File in memory by localId.
+  private pickedFiles = new Map<
+    string,
+    { file: File; mediaType: MediaType; objectUrl: string; mimeType: string }
+  >();
 
   async configure(options: UploadCareConfig): Promise<void> {
     if (!options.publicKey || options.publicKey.trim() === '') {
@@ -78,7 +89,7 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
     return file;
   }
 
-  private validatePickedFile(file: File, mediaType: 'image' | 'video'): void {
+  private validatePickedFile(file: File, mediaType: MediaType): void {
     const mime = (file.type || '').toLowerCase();
 
     if (mediaType === 'image') {
@@ -88,8 +99,6 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
       if (file.size > IMAGE_MAX_BYTES) {
         throw new Error('Image exceeds max size of 8mb');
       }
-      // Resolution checks on web require decoding; if you want it, we can add it,
-      // but it’s async and slightly heavier. Native platforms will enforce strictly.
       return;
     }
 
@@ -100,8 +109,159 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
       if (file.size > VIDEO_MAX_BYTES) {
         throw new Error('Video exceeds max size of 512mb');
       }
-      // Duration/resolution checks on web require loading metadata; can be added if you want.
     }
+  }
+
+  private createHiddenFileInput(accept: string, multiple: boolean): HTMLInputElement {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.multiple = multiple;
+
+    input.style.position = 'fixed';
+    input.style.left = '-9999px';
+    input.style.top = '-9999px';
+
+    document.body.appendChild(input);
+    return input;
+  }
+
+  private cleanupHiddenFileInput(input: HTMLInputElement) {
+    try {
+      if (input.parentNode) input.parentNode.removeChild(input);
+    } catch {}
+  }
+
+  private inferMediaTypeFromMime(mime: string): MediaType {
+    return mime.startsWith('video/') ? 'video' : 'image';
+  }
+
+  /**
+   * Pick WITHOUT upload (web).
+   * Returns a LocalPickedMedia with a blob: object URL for preview.
+   * Stores the File in-memory keyed by localId so uploadPicked can upload later.
+   */
+  async pickMedia(options?: PickMediaOptions): Promise<LocalPickedMedia> {
+    const requested = options?.mediaType ?? 'any';
+
+    const accept =
+      requested === 'image'
+        ? 'image/*'
+        : requested === 'video'
+          ? 'video/*'
+          : 'image/*,video/*';
+
+    return new Promise<LocalPickedMedia>((resolve, reject) => {
+      const input = this.createHiddenFileInput(accept, false);
+
+      input.onchange = async () => {
+        try {
+          const files = input.files;
+          if (!files || files.length === 0) {
+            this.cleanupHiddenFileInput(input);
+            reject(new Error('No file selected'));
+            return;
+          }
+
+          const file = files.item(0);
+          if (!file) {
+            this.cleanupHiddenFileInput(input);
+            reject(new Error('No file selected'));
+            return;
+          }
+
+          const mime = (file.type || '').toLowerCase();
+          const inferred: MediaType = this.inferMediaTypeFromMime(mime);
+
+          const effective: MediaType =
+            requested === 'any' ? inferred : (requested as MediaType);
+
+          this.validatePickedFile(file, effective);
+
+          const localId = crypto.randomUUID();
+          const objectUrl = URL.createObjectURL(file);
+
+          // Keep for later upload
+          this.pickedFiles.set(localId, {
+            file,
+            mediaType: effective,
+            objectUrl,
+            mimeType: mime,
+          });
+
+          this.cleanupHiddenFileInput(input);
+
+          resolve({
+            localId,
+            uri: objectUrl, // web preview URL
+            mediaType: effective,
+            mimeType: mime || undefined,
+            displayName: file.name || undefined,
+            sizeBytes: file.size,
+          });
+        } catch (err: any) {
+          this.cleanupHiddenFileInput(input);
+          reject(new Error(err?.message ?? String(err)));
+        }
+      };
+
+      input.click();
+    });
+  }
+
+  /**
+   * Upload later (web).
+   * Uses the previously picked File stored in-memory.
+   */
+  async uploadPicked(options: UploadPickedOptions): Promise<UploadCareUploadResult> {
+    const client = this.ensureClient();
+
+    const { localId, fileName } = options;
+
+    if (!localId || localId.trim() === '') {
+      throw new Error('localId is required');
+    }
+    if (!fileName || fileName.trim() === '') {
+      throw new Error('fileName is required');
+    }
+
+    const picked = this.pickedFiles.get(localId);
+    if (!picked) {
+      throw new Error('Unknown localId (maybe page refreshed). Pick media again.');
+    }
+
+    const uploadId = crypto.randomUUID();
+    const mediaType = picked.mediaType;
+
+    const info = await client.uploadFile(picked.file, {
+      fileName,
+      contentType: picked.mimeType || undefined,
+      onProgress: (progress) => {
+        if (!progress.isComputable || typeof progress.value !== 'number') return;
+        const pct = Math.max(0, Math.min(100, Math.round(progress.value * 100)));
+
+        this.notifyListeners('uploadProgress', {
+          uploadId,
+          progress: pct,
+          mediaType,
+        });
+      },
+    });
+
+    // Optional cleanup: free memory + object URL once uploaded
+    try {
+      URL.revokeObjectURL(picked.objectUrl);
+    } catch {}
+    this.pickedFiles.delete(localId);
+
+    const file = this.mapUploadcareFile(info);
+
+    return {
+      success: true,
+      cancelled: false,
+      uploadId,
+      files: [file],
+    };
   }
 
   async openUploader(options?: UploadCareUploadOptions): Promise<UploadCareUploadResult> {
@@ -119,29 +279,13 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
             : 'image/*,video/*';
 
     return new Promise<UploadCareUploadResult>((resolve, reject) => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = accept;
-
-      if (options?.multiple) {
-        input.multiple = true;
-      }
-
-      input.style.position = 'fixed';
-      input.style.left = '-9999px';
-      input.style.top = '-9999px';
-
-      document.body.appendChild(input);
-
-      const cleanup = () => {
-        document.body.removeChild(input);
-      };
+      const input = this.createHiddenFileInput(accept, Boolean(options?.multiple));
 
       input.onchange = async () => {
         try {
           const files = input.files;
           if (!files || files.length === 0) {
-            cleanup();
+            this.cleanupHiddenFileInput(input);
             resolve({
               success: false,
               cancelled: true,
@@ -166,11 +310,10 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
           const uploaded: UploadCareFile[] = [];
           for (const file of selected) {
             const mime = (file.type || '').toLowerCase();
-            const inferredMediaType: 'image' | 'video' =
-              mime.startsWith('video/') ? 'video' : 'image';
+            const inferredMediaType: MediaType = this.inferMediaTypeFromMime(mime);
 
-            const effectiveMediaType: 'image' | 'video' =
-              requested === 'any' ? inferredMediaType : requested;
+            const effectiveMediaType: MediaType =
+              requested === 'any' ? inferredMediaType : (requested as MediaType);
 
             this.validatePickedFile(file, effectiveMediaType);
 
@@ -190,7 +333,7 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
             uploaded.push(this.mapUploadcareFile(info));
           }
 
-          cleanup();
+          this.cleanupHiddenFileInput(input);
 
           resolve({
             success: true,
@@ -199,9 +342,8 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
             files: uploaded,
           });
         } catch (err: any) {
-          cleanup();
-          const message = err?.message ?? String(err);
-          reject(new Error(message));
+          this.cleanupHiddenFileInput(input);
+          reject(new Error(err?.message ?? String(err)));
         }
       };
 
@@ -226,13 +368,11 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
     const mimeMatch = /^data:([^;]+);base64,/.exec(dataUri);
     const mime = (mimeMatch?.[1] ?? '').toLowerCase();
 
-    const mediaType: 'image' | 'video' = mime.startsWith('video/') ? 'video' : 'image';
+    const mediaType: MediaType = mime.startsWith('video/') ? 'video' : 'image';
 
-    // Convert data URI to Blob and upload.
     const response = await fetch(dataUri);
     const blob = await response.blob();
 
-    // Size rules
     if (mediaType === 'image' && blob.size > IMAGE_MAX_BYTES) {
       throw new Error('Image exceeds max size of 8mb');
     }

@@ -16,6 +16,8 @@ npx cap sync
 * [`configure(...)`](#configure)
 * [`openUploader(...)`](#openuploader)
 * [`uploadDataUri(...)`](#uploaddatauri)
+* [`pickMedia(...)`](#pickmedia)
+* [`uploadPicked(...)`](#uploadpicked)
 * [`addListener('uploadProgress', ...)`](#addlisteneruploadprogress-)
 * [`removeAllListeners()`](#removealllisteners)
 * [Interfaces](#interfaces)
@@ -72,6 +74,42 @@ Expects a full data URI like: data:image/jpeg;base64,/9j/4AAQSk...
 | Param         | Type                                                                          |
 | ------------- | ----------------------------------------------------------------------------- |
 | **`options`** | <code><a href="#uploadcaredataurioptions">UploadCareDataUriOptions</a></code> |
+
+**Returns:** <code>Promise&lt;<a href="#uploadcareuploadresult">UploadCareUploadResult</a>&gt;</code>
+
+--------------------
+
+
+### pickMedia(...)
+
+```typescript
+pickMedia(options?: PickMediaOptions | undefined) => Promise<LocalPickedMedia>
+```
+
+Pick without upload.
+Expects a full data URI like: data:image/jpeg;base64,/9j/4AAQSk...
+
+| Param         | Type                                                          |
+| ------------- | ------------------------------------------------------------- |
+| **`options`** | <code><a href="#pickmediaoptions">PickMediaOptions</a></code> |
+
+**Returns:** <code>Promise&lt;<a href="#localpickedmedia">LocalPickedMedia</a>&gt;</code>
+
+--------------------
+
+
+### uploadPicked(...)
+
+```typescript
+uploadPicked(options: UploadPickedOptions) => Promise<UploadCareUploadResult>
+```
+
+upload later using the previously picked item.
+Expects a full data URI like: data:image/jpeg;base64,/9j/4AAQSk...
+
+| Param         | Type                                                                |
+| ------------- | ------------------------------------------------------------------- |
+| **`options`** | <code><a href="#uploadpickedoptions">UploadPickedOptions</a></code> |
 
 **Returns:** <code>Promise&lt;<a href="#uploadcareuploadresult">UploadCareUploadResult</a>&gt;</code>
 
@@ -174,6 +212,36 @@ The `dataUri` must be a full data URI string:
 | Prop           | Type                |
 | -------------- | ------------------- |
 | **`dataUri`**  | <code>string</code> |
+| **`fileName`** | <code>string</code> |
+
+
+#### LocalPickedMedia
+
+| Prop              | Type                            |
+| ----------------- | ------------------------------- |
+| **`localId`**     | <code>string</code>             |
+| **`uri`**         | <code>string</code>             |
+| **`mediaType`**   | <code>'image' \| 'video'</code> |
+| **`mimeType`**    | <code>string</code>             |
+| **`displayName`** | <code>string</code>             |
+| **`sizeBytes`**   | <code>number</code>             |
+| **`width`**       | <code>number</code>             |
+| **`height`**      | <code>number</code>             |
+| **`durationMs`**  | <code>number</code>             |
+
+
+#### PickMediaOptions
+
+| Prop            | Type                                                                |
+| --------------- | ------------------------------------------------------------------- |
+| **`mediaType`** | <code><a href="#uploadcaremediatype">UploadCareMediaType</a></code> |
+
+
+#### UploadPickedOptions
+
+| Prop           | Type                |
+| -------------- | ------------------- |
+| **`localId`**  | <code>string</code> |
 | **`fileName`** | <code>string</code> |
 
 

@@ -10,6 +10,27 @@ export interface UploadCareProgressEvent {
   mediaType: 'image' | 'video';
 }
 
+export interface LocalPickedMedia {
+  localId: string; // stable id you generate (uuid)
+  uri: string; // content://... persistable
+  mediaType: 'image' | 'video';
+  mimeType?: string;
+  displayName?: string;
+  sizeBytes?: number;
+  width?: number;
+  height?: number;
+  durationMs?: number;
+}
+
+
+export interface PickMediaOptions {
+  mediaType?: UploadCareMediaType; // image | video | any
+}
+
+export interface UploadPickedOptions {
+  localId: string;
+  fileName: string; // the final name you want stored in Uploadcare
+}
 export interface CapUploadCarePlugin {
   /**
    * Configure the Uploadcare SDK.
@@ -28,6 +49,19 @@ export interface CapUploadCarePlugin {
    * Expects a full data URI like: data:image/jpeg;base64,/9j/4AAQSk...
    */
   uploadDataUri(options: UploadCareDataUriOptions): Promise<UploadCareUploadResult>;
+
+  /**
+   * Pick without upload.
+   * Expects a full data URI like: data:image/jpeg;base64,/9j/4AAQSk...
+   */
+  pickMedia(options?: PickMediaOptions): Promise<LocalPickedMedia>;
+
+  /**
+   * upload later using the previously picked item.
+   * Expects a full data URI like: data:image/jpeg;base64,/9j/4AAQSk...
+   */
+  uploadPicked(options: UploadPickedOptions): Promise<UploadCareUploadResult>;
+  
   /**
    * Upload progress events while an upload is in-flight.
    */
