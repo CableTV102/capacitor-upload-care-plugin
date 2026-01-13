@@ -1,25 +1,36 @@
-name: Publish Package
+name: Publish to npm
 
 on:
   push:
     tags:
       - 'v*'
-    branches:
-      - main
 
 permissions:
-  id-token: write
   contents: read
+  id-token: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '20'
           registry-url: 'https://registry.npmjs.org'
-      - run: npm ci
-      - run: npm run build --if-present
-      - run: npm publish
+
+      - name: Upgrade npm for trusted publishing
+        run: npm i -g npm@11.5.1
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build
+        run: npm run build --if-present
+
+      - name: Test
+        run: npm test --if-present
+
+      - name: Publish
+        run: npm publish --access public
