@@ -14,10 +14,16 @@ import com.uploadcare.android.library.callbacks.UploadFileCallback;
 import com.uploadcare.android.library.exceptions.UploadcareApiException;
 import com.uploadcare.android.library.upload.FileUploader;
 
-import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
+import java.io.InputStream;
+import java.io.IOException;
+import java.util.UUID;
+
 
 public class CapUploadCare {
 
@@ -87,6 +93,47 @@ public class CapUploadCare {
             this.width = width;
             this.height = height;
             this.durationMs = durationMs;
+        }
+    }
+
+    private static String sanitizeFileName(String name) {
+        if (name == null) return "upload.bin";
+        String trimmed = name.trim();
+        if (trimmed.isEmpty()) return "upload.bin";
+
+        // Keep it filesystem-friendly
+        String safe = trimmed.replaceAll("[^a-zA-Z0-9._-]", "_");
+        // Avoid absurdly long names
+        if (safe.length() > 128) safe = safe.substring(safe.length() - 128);
+        return safe;
+    }
+
+    private static File copyUriToCacheFile(Context context, Uri uri, String preferredFileName) throws IOException {
+        String safeName = sanitizeFileName(preferredFileName);
+        File outFile = new File(
+            context.getCacheDir(),
+            "uc-" + UUID.randomUUID().toString() + "-" + safeName
+        );
+
+        InputStream in = null;
+        OutputStream out = null;
+        try {
+            in = context.getContentResolver().openInputStream(uri);
+            if (in == null) {
+                throw new IOException("Could not open input stream for uri");
+            }
+            out = new FileOutputStream(outFile);
+
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                out.write(buffer, 0, read);
+            }
+            out.flush();
+            return outFile;
+        } finally {
+            try { if (in != null) in.close(); } catch (Exception ignored) {}
+            try { if (out != null) out.close(); } catch (Exception ignored) {}
         }
     }
 
@@ -365,78 +412,89 @@ public class CapUploadCare {
         String fileName,
         ProgressCallback progressCallback,
         UploadCallback callback
-) {
-    if (client == null) {
-        callback.onError(new IllegalStateException("Uploadcare client is not configured"));
-        return;
-    }
+    ) {
+        if (client == null) {
+            callback.onError(new IllegalStateException("Uploadcare client is not configured"));
+            return;
+        }
 
-    // Reuse your validation logic
-    String mt = (mediaType == null ? "any" : mediaType.toLowerCase(Locale.US));
-    ValidationResult vr;
+        // Reuse your validation logic
+        String mt = (mediaType == null ? "any" : mediaType.toLowerCase(Locale.US));
+        ValidationResult vr;
 
-    if (mt.equals("image")) {
-        vr = validateImage(context, uri);
-    } else if (mt.equals("video")) {
-        vr = validateVideo(context, uri);
-    } else {
-        String mime = context.getContentResolver().getType(uri);
-        if (mime != null && mime.toLowerCase(Locale.US).startsWith("video/")) {
+        if (mt.equals("image")) {
+            vr = validateImage(context, uri);
+        } else if (mt.equals("video")) {
             vr = validateVideo(context, uri);
         } else {
-            vr = validateImage(context, uri);
-        }
-    }
-
-    if (!vr.ok) {
-        callback.onError(new IllegalArgumentException(vr.errorMessage));
-        return;
-    }
-
-    FileUploader uploader = new FileUploader(client, uri, context)
-            .store(true)
-            .withFilename(fileName);
-
-    uploader.uploadAsync(new UploadFileCallback() {
-        @Override
-        public void onFailure(UploadcareApiException e) {
-            if (debug) Logger.error(TAG, "Upload failed: " + e.getMessage(), e);
-            callback.onError(e);
-        }
-
-        @Override
-        public void onProgressUpdate(long bytesWritten, long contentLength, double progress) {
-            if (contentLength > 0) {
-                int percent = (int) Math.round(progress * 100.0);
-                if (progressCallback != null) {
-                    progressCallback.onProgress(bytesWritten, contentLength, percent);
-                }
+            String mime = context.getContentResolver().getType(uri);
+            if (mime != null && mime.toLowerCase(Locale.US).startsWith("video/")) {
+                vr = validateVideo(context, uri);
+            } else {
+                vr = validateImage(context, uri);
             }
         }
 
-        @Override
-        public void onSuccess(UploadcareFile file) {
-            String uuid = file.getUuid();
-            String cdnUrl = (file.getOriginalFileUrl() != null)
-                    ? file.getOriginalFileUrl().toString()
-                    : "https://ucarecdn.com/" + uuid + "/";
-
-            Map<String, Object> map = new HashMap<>();
-            map.put("uuid", uuid);
-            map.put("cdnUrl", cdnUrl);
-
-            if (file.getOriginalFilename() != null) map.put("filename", file.getOriginalFilename());
-            int size = file.getSize();
-            if (size > 0) map.put("sizeBytes", size);
-            if (file.getMimeType() != null) map.put("mimeType", file.getMimeType());
-
-            if (vr.width != null) map.put("width", vr.width);
-            if (vr.height != null) map.put("height", vr.height);
-
-            callback.onSuccess(map);
+        if (!vr.ok) {
+            callback.onError(new IllegalArgumentException(vr.errorMessage));
+            return;
         }
-    });
-}
+
+        final File tempFile;
+        try {
+            // Copy content:// Uri into a temp file so we can set the upload filename
+            tempFile = copyUriToCacheFile(context, uri, fileName);
+        } catch (Exception e) {
+            callback.onError(new IOException("Failed to prepare file for upload: " + e.getMessage(), e));
+            return;
+        }
+
+        // Older Uploadcare Android SDKs support File + filename constructor
+        FileUploader uploader = new FileUploader(client, tempFile, fileName).store(true);
+
+        uploader.uploadAsync(new UploadFileCallback() {
+            @Override
+            public void onFailure(UploadcareApiException e) {
+                try { tempFile.delete(); } catch (Exception ignored) {}
+                if (debug) Logger.error(TAG, "Upload failed: " + e.getMessage(), e);
+                callback.onError(e);
+            }
+
+            @Override
+            public void onProgressUpdate(long bytesWritten, long contentLength, double progress) {
+                if (contentLength > 0) {
+                    int percent = (int) Math.round(progress * 100.0);
+                    if (progressCallback != null) {
+                        progressCallback.onProgress(bytesWritten, contentLength, percent);
+                    }
+                }
+            }
+
+            @Override
+            public void onSuccess(UploadcareFile file) {
+                try { tempFile.delete(); } catch (Exception ignored) {}
+
+                String uuid = file.getUuid();
+                String cdnUrl = (file.getOriginalFileUrl() != null)
+                        ? file.getOriginalFileUrl().toString()
+                        : "https://ucarecdn.com/" + uuid + "/";
+
+                Map<String, Object> map = new HashMap<>();
+                map.put("uuid", uuid);
+                map.put("cdnUrl", cdnUrl);
+
+                if (file.getOriginalFilename() != null) map.put("filename", file.getOriginalFilename());
+                int size = file.getSize();
+                if (size > 0) map.put("sizeBytes", size);
+                if (file.getMimeType() != null) map.put("mimeType", file.getMimeType());
+
+                if (vr.width != null) map.put("width", vr.width);
+                if (vr.height != null) map.put("height", vr.height);
+
+                callback.onSuccess(map);
+            }
+        });
+    }
 
     public void uploadSingle(
             Context context,
