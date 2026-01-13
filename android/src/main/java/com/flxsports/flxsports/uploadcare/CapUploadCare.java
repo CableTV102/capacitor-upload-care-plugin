@@ -14,16 +14,10 @@ import com.uploadcare.android.library.callbacks.UploadFileCallback;
 import com.uploadcare.android.library.exceptions.UploadcareApiException;
 import com.uploadcare.android.library.upload.FileUploader;
 
+import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.OutputStream;
-import java.io.InputStream;
-import java.io.IOException;
-import java.util.UUID;
-
 
 public class CapUploadCare {
 
@@ -96,47 +90,6 @@ public class CapUploadCare {
         }
     }
 
-    private static String sanitizeFileName(String name) {
-        if (name == null) return "upload.bin";
-        String trimmed = name.trim();
-        if (trimmed.isEmpty()) return "upload.bin";
-
-        // Keep it filesystem-friendly
-        String safe = trimmed.replaceAll("[^a-zA-Z0-9._-]", "_");
-        // Avoid absurdly long names
-        if (safe.length() > 128) safe = safe.substring(safe.length() - 128);
-        return safe;
-    }
-
-    private static File copyUriToCacheFile(Context context, Uri uri, String preferredFileName) throws IOException {
-        String safeName = sanitizeFileName(preferredFileName);
-        File outFile = new File(
-            context.getCacheDir(),
-            "uc-" + UUID.randomUUID().toString() + "-" + safeName
-        );
-
-        InputStream in = null;
-        OutputStream out = null;
-        try {
-            in = context.getContentResolver().openInputStream(uri);
-            if (in == null) {
-                throw new IOException("Could not open input stream for uri");
-            }
-            out = new FileOutputStream(outFile);
-
-            byte[] buffer = new byte[8192];
-            int read;
-            while ((read = in.read(buffer)) != -1) {
-                out.write(buffer, 0, read);
-            }
-            out.flush();
-            return outFile;
-        } finally {
-            try { if (in != null) in.close(); } catch (Exception ignored) {}
-            try { if (out != null) out.close(); } catch (Exception ignored) {}
-        }
-    }
-
     private static boolean isAllowedImageMime(String mime) {
         if (mime == null) return false;
         String m = mime.toLowerCase(Locale.US);
@@ -197,7 +150,9 @@ public class CapUploadCare {
     public ValidationResult validateImage(Context context, Uri uri) {
         String mime = context.getContentResolver().getType(uri);
         if (!isAllowedImageMime(mime)) {
-            return new ValidationResult(false, "Unsupported image format: " + (mime == null ? "unknown" : mime), mime, null, -1, null, null, null);
+            return new ValidationResult(false,
+                    "Unsupported image format: " + (mime == null ? "unknown" : mime),
+                    mime, null, -1, null, null, null);
         }
 
         long size = getSizeBytes(context, uri);
@@ -238,14 +193,15 @@ public class CapUploadCare {
         }
 
         String displayName = getDisplayName(context, uri);
-
         return new ValidationResult(true, null, mime, displayName, size, w, h, null);
     }
 
     public ValidationResult validateVideo(Context context, Uri uri) {
         String mime = context.getContentResolver().getType(uri);
         if (!isAllowedVideoMime(mime)) {
-            return new ValidationResult(false, "Unsupported video format: " + (mime == null ? "unknown" : mime), mime, null, -1, null, null, null);
+            return new ValidationResult(false,
+                    "Unsupported video format: " + (mime == null ? "unknown" : mime),
+                    mime, null, -1, null, null, null);
         }
 
         long size = getSizeBytes(context, uri);
@@ -308,7 +264,6 @@ public class CapUploadCare {
         }
 
         String displayName = getDisplayName(context, uri);
-
         return new ValidationResult(true, null, mime, displayName, size, w, h, durationMs);
     }
 
@@ -374,31 +329,20 @@ public class CapUploadCare {
             @Override
             public void onSuccess(UploadcareFile file) {
                 String uuid = file.getUuid();
-                String cdnUrl;
-
-                if (file.getOriginalFileUrl() != null) {
-                    cdnUrl = file.getOriginalFileUrl().toString();
-                } else {
-                    cdnUrl = "https://ucarecdn.com/" + uuid + "/";
-                }
+                String cdnUrl = (file.getOriginalFileUrl() != null)
+                        ? file.getOriginalFileUrl().toString()
+                        : "https://ucarecdn.com/" + uuid + "/";
 
                 Map<String, Object> map = new HashMap<>();
                 map.put("uuid", uuid);
                 map.put("cdnUrl", cdnUrl);
 
-                if (file.getOriginalFilename() != null) {
-                    map.put("filename", file.getOriginalFilename());
-                }
+                if (file.getOriginalFilename() != null) map.put("filename", file.getOriginalFilename());
 
-                // getSize() is int in your SDK version
                 int size = file.getSize();
-                if (size > 0) {
-                    map.put("sizeBytes", size);
-                }
+                if (size > 0) map.put("sizeBytes", size);
 
-                if (file.getMimeType() != null) {
-                    map.put("mimeType", file.getMimeType());
-                }
+                if (file.getMimeType() != null) map.put("mimeType", file.getMimeType());
 
                 callback.onSuccess(map);
             }
@@ -406,19 +350,18 @@ public class CapUploadCare {
     }
 
     public void uploadUri(
-        Context context,
-        Uri uri,
-        String mediaType,
-        String fileName,
-        ProgressCallback progressCallback,
-        UploadCallback callback
+            Context context,
+            Uri uri,
+            String mediaType,
+            String fileName,
+            ProgressCallback progressCallback,
+            UploadCallback callback
     ) {
         if (client == null) {
             callback.onError(new IllegalStateException("Uploadcare client is not configured"));
             return;
         }
 
-        // Reuse your validation logic
         String mt = (mediaType == null ? "any" : mediaType.toLowerCase(Locale.US));
         ValidationResult vr;
 
@@ -440,22 +383,25 @@ public class CapUploadCare {
             return;
         }
 
-        final File tempFile;
+        // Use InputStream constructor (available in your SDK), and pass fileName as the "name"
+        final InputStream stream;
         try {
-            // Copy content:// Uri into a temp file so we can set the upload filename
-            tempFile = copyUriToCacheFile(context, uri, fileName);
+            stream = context.getContentResolver().openInputStream(uri);
+            if (stream == null) {
+                callback.onError(new IOException("Could not open input stream for uri"));
+                return;
+            }
         } catch (Exception e) {
-            callback.onError(new IOException("Failed to prepare file for upload: " + e.getMessage(), e));
+            callback.onError(new IOException("Failed to open input stream: " + e.getMessage(), e));
             return;
         }
 
-        // Older Uploadcare Android SDKs support File + filename constructor
-        FileUploader uploader = new FileUploader(client, tempFile, fileName).store(true);
+        FileUploader uploader = new FileUploader(client, stream, fileName).store(true);
 
         uploader.uploadAsync(new UploadFileCallback() {
             @Override
             public void onFailure(UploadcareApiException e) {
-                try { tempFile.delete(); } catch (Exception ignored) {}
+                try { stream.close(); } catch (Exception ignored) {}
                 if (debug) Logger.error(TAG, "Upload failed: " + e.getMessage(), e);
                 callback.onError(e);
             }
@@ -472,7 +418,7 @@ public class CapUploadCare {
 
             @Override
             public void onSuccess(UploadcareFile file) {
-                try { tempFile.delete(); } catch (Exception ignored) {}
+                try { stream.close(); } catch (Exception ignored) {}
 
                 String uuid = file.getUuid();
                 String cdnUrl = (file.getOriginalFileUrl() != null)
@@ -484,8 +430,10 @@ public class CapUploadCare {
                 map.put("cdnUrl", cdnUrl);
 
                 if (file.getOriginalFilename() != null) map.put("filename", file.getOriginalFilename());
+
                 int size = file.getSize();
                 if (size > 0) map.put("sizeBytes", size);
+
                 if (file.getMimeType() != null) map.put("mimeType", file.getMimeType());
 
                 if (vr.width != null) map.put("width", vr.width);
@@ -556,30 +504,20 @@ public class CapUploadCare {
             @Override
             public void onSuccess(UploadcareFile file) {
                 String uuid = file.getUuid();
-                String cdnUrl;
-
-                if (file.getOriginalFileUrl() != null) {
-                    cdnUrl = file.getOriginalFileUrl().toString();
-                } else {
-                    cdnUrl = "https://ucarecdn.com/" + uuid + "/";
-                }
+                String cdnUrl = (file.getOriginalFileUrl() != null)
+                        ? file.getOriginalFileUrl().toString()
+                        : "https://ucarecdn.com/" + uuid + "/";
 
                 Map<String, Object> map = new HashMap<>();
                 map.put("uuid", uuid);
                 map.put("cdnUrl", cdnUrl);
 
-                if (file.getOriginalFilename() != null) {
-                    map.put("filename", file.getOriginalFilename());
-                }
+                if (file.getOriginalFilename() != null) map.put("filename", file.getOriginalFilename());
 
                 int size = file.getSize();
-                if (size > 0) {
-                    map.put("sizeBytes", size);
-                }
+                if (size > 0) map.put("sizeBytes", size);
 
-                if (file.getMimeType() != null) {
-                    map.put("mimeType", file.getMimeType());
-                }
+                if (file.getMimeType() != null) map.put("mimeType", file.getMimeType());
 
                 if (vr.width != null) map.put("width", vr.width);
                 if (vr.height != null) map.put("height", vr.height);
