@@ -101,15 +101,21 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
         call.resolve()
     }
 
-    // Existing: pick + upload immediately (kept for backcompat)
     @objc func openUploader(_ call: CAPPluginCall) {
         if pendingCall != nil {
             call.reject("An upload is already in progress")
             return
         }
-        var options = call.getObject("options") ?? [:]
+
+        var options: [String: Any] = call.getObject("options") ?? [:]
+
         if options.isEmpty {
-            options = call.options
+            // call.options is [AnyHashable: Any] — convert to [String: Any]
+            options = Dictionary(
+                uniqueKeysWithValues: call.options.compactMap { key, value in
+                    guard let k = key as? String else { return nil }
+                    return (k, value)
+                })
         }
 
         pendingCall = call
@@ -117,16 +123,23 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
         presentPicker(options: options, call: call)
     }
 
-    // New: pick without upload
     @objc func pickMedia(_ call: CAPPluginCall) {
         if pendingCall != nil {
             call.reject("A picker is already in progress")
             return
         }
-        var options = call.getObject("options") ?? [:]
+
+        var options: [String: Any] = call.getObject("options") ?? [:]
+
         if options.isEmpty {
-            options = call.options
+            // call.options is [AnyHashable: Any] — convert to [String: Any]
+            options = Dictionary(
+                uniqueKeysWithValues: call.options.compactMap { key, value in
+                    guard let k = key as? String else { return nil }
+                    return (k, value)
+                })
         }
+
         pendingCall = call
         pendingMode = .pickMedia(options: options)
         presentPicker(options: options, call: call)
@@ -684,31 +697,32 @@ extension CapUploadCarePlugin: UIImagePickerControllerDelegate, UINavigationCont
                 pickedById[localId] = tempUrl
                 pickedTypeById[localId] = mediaType
 
-                var payload: [String: Any] = [
+                var payloadAny: [String: Any] = [
                     "localId": localId,
                     "uri": tempUrl.absoluteString,  // file://...
                     "mediaType": mediaType,
                 ]
 
                 if let mime = mimeTypeForUrl(tempUrl) {
-                    payload["mimeType"] = mime
+                    payloadAny["mimeType"] = mime
                 }
                 if let size = fileSizeBytes(for: tempUrl) {
-                    payload["sizeBytes"] = size
+                    payloadAny["sizeBytes"] = size
                 }
 
                 if mediaType == "image" {
                     if let dims = imageDimensions(for: tempUrl) {
-                        payload["width"] = dims.w
-                        payload["height"] = dims.h
+                        payloadAny["width"] = dims.w
+                        payloadAny["height"] = dims.h
                     }
                 } else {
                     let meta = videoMetadata(for: tempUrl)
-                    if let w = meta.w { payload["width"] = w }
-                    if let h = meta.h { payload["height"] = h }
-                    if let d = meta.durationMs { payload["durationMs"] = d }
+                    if let w = meta.w { payloadAny["width"] = w }
+                    if let h = meta.h { payloadAny["height"] = h }
+                    if let d = meta.durationMs { payloadAny["durationMs"] = d }
                 }
 
+                let payload = self.toJSObject(payloadAny)
                 call.resolve(payload)
 
             case .openUploader(let options):
