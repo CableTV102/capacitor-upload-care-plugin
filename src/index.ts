@@ -6,10 +6,10 @@ import type {
   PickMediaOptions,
   UploadCareUploadOptions,
   UploadCareUploadResult,
-  UploadCareFile,
   UploadCareDataUriOptions,
   UploadCareProgressEvent,
   UploadPickedOptions,
+  UploadCareFile,
 } from './definitions';
 
 const CapUploadCare = registerPlugin<CapUploadCarePlugin>('CapUploadCare', {
@@ -28,48 +28,71 @@ export { CapUploadCare };
  */
 export async function selectAndUploadImage(
   options?: UploadCareUploadOptions,
-): Promise<UploadCareFile | null> {
+): Promise<UploadCareUploadResult> {
+  const uploadId =
+    options?.uploadId ?? (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+
   const mergedOptions: UploadCareUploadOptions = {
     ...options,
+    uploadId,
     mediaType: 'image',
     allowedMimeTypes: options?.allowedMimeTypes ?? ['image/*'],
   };
 
   const result = await CapUploadCare.openUploader(mergedOptions);
 
-  if (result.cancelled) return null;
+  if (result.cancelled) return { ...result, uploadId };
 
   if (!result.success || !result.files?.length) {
     throw new Error(result.errorMessage ?? 'Upload failed or no file returned');
   }
 
-  return result.files[0];
+  return { ...result, uploadId: result.uploadId ?? uploadId };
+}
+
+export async function selectAndUploadSingleImageFile(
+  options?: UploadCareUploadOptions,
+): Promise<UploadCareFile | null> {
+  const res = await selectAndUploadImage(options);
+  if (res.cancelled) return null;
+  if (!res.success || res.files.length === 0) throw new Error(res.errorMessage ?? 'Upload failed');
+  return res.files[0];
 }
 
 export async function selectAndUploadVideo(
   options?: UploadCareUploadOptions,
-): Promise<UploadCareFile | null> {
+): Promise<UploadCareUploadResult> {
+  const uploadId =
+    options?.uploadId ?? (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+
   const mergedOptions: UploadCareUploadOptions = {
     ...options,
+    uploadId,
     mediaType: 'video',
     allowedMimeTypes: options?.allowedMimeTypes ?? ['video/*'],
   };
 
   const result = await CapUploadCare.openUploader(mergedOptions);
 
-  if (result.cancelled) return null;
+  if (result.cancelled) return { ...result, uploadId };
 
   if (!result.success || !result.files?.length) {
     throw new Error(result.errorMessage ?? 'Upload failed or no file returned');
   }
 
-  return result.files[0];
+  return { ...result, uploadId: result.uploadId ?? uploadId };
 }
 
 export async function uploadDataUriImage(
   options: UploadCareDataUriOptions,
-): Promise<UploadCareFile> {
-  const result: UploadCareUploadResult = await CapUploadCare.uploadDataUri(options);
+): Promise<UploadCareUploadResult> {
+  const uploadId =
+    options.uploadId ?? (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+
+  const result: UploadCareUploadResult = await CapUploadCare.uploadDataUri({
+    ...options,
+    uploadId,
+  });
 
   const cancelled = result.cancelled ?? false;
   const hasFiles = Array.isArray(result.files) && result.files.length > 0;
@@ -87,13 +110,23 @@ export async function uploadDataUriImage(
     throw new Error(result.errorMessage ?? 'Upload has failed or no file returned');
   }
 
-  return result.files[0];
+  // guarantee uploadId is present for callers
+  return {
+    ...result,
+    uploadId: result.uploadId ?? uploadId,
+  };
 }
 
 export async function uploadDataUriVideo(
   options: UploadCareDataUriOptions,
-): Promise<UploadCareFile> {
-  const result: UploadCareUploadResult = await CapUploadCare.uploadDataUri(options);
+): Promise<UploadCareUploadResult> {
+  const uploadId =
+    options.uploadId ?? (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+
+  const result: UploadCareUploadResult = await CapUploadCare.uploadDataUri({
+    ...options,
+    uploadId,
+  });
 
   const cancelled = result.cancelled ?? false;
   const hasFiles = Array.isArray(result.files) && result.files.length > 0;
@@ -111,7 +144,10 @@ export async function uploadDataUriVideo(
     throw new Error(result.errorMessage ?? 'Upload has failed or no file returned');
   }
 
-  return result.files[0];
+  return {
+    ...result,
+    uploadId: result.uploadId ?? uploadId,
+  };
 }
 
 /**
@@ -130,7 +166,13 @@ export async function pickMedia(
 export async function uploadPicked(
   options: UploadPickedOptions,
 ): Promise<UploadCareUploadResult> {
-  return CapUploadCare.uploadPicked(options);
+  const uploadId =
+    options.uploadId ?? (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+
+  return CapUploadCare.uploadPicked({
+    ...options,
+    uploadId,
+  });
 }
 
 /**

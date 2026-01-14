@@ -29,7 +29,9 @@ export interface PickMediaOptions {
 export interface UploadPickedOptions {
   localId: string;
   fileName: string; // the final name you want stored in Uploadcare
+  uploadId?: string;
 }
+
 export interface CapUploadCarePlugin {
   /**
    * Configure the Uploadcare SDK.
@@ -142,6 +144,11 @@ export interface UploadCareUploadOptions {
    * Max file size in bytes (we can enforce in native before uploading).
    */
   maxFileSizeBytes?: number;
+
+  /**
+   * Let's UI pre-assign uploadId for old openUploader flow.
+   */
+  uploadId?: string;
 }
 
 /**
@@ -152,6 +159,7 @@ export interface UploadCareUploadOptions {
 export interface UploadCareDataUriOptions {
   dataUri: string;
   fileName: string;
+  uploadId?: string;
 }
 
 /**

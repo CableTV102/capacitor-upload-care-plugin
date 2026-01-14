@@ -230,7 +230,7 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
       throw new Error('Unknown localId (maybe page refreshed). Pick media again.');
     }
 
-    const uploadId = crypto.randomUUID();
+    const uploadId = options?.uploadId ?? crypto.randomUUID();
     const mediaType = picked.mediaType;
 
     const info = await client.uploadFile(picked.file, {
@@ -266,7 +266,7 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
 
   async openUploader(options?: UploadCareUploadOptions): Promise<UploadCareUploadResult> {
     const client = this.ensureClient();
-    const uploadId = crypto.randomUUID();
+    const uploadId = options?.uploadId ?? crypto.randomUUID();
 
     const requested = options?.mediaType ?? 'any';
     const accept =
@@ -318,6 +318,8 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
             this.validatePickedFile(file, effectiveMediaType);
 
             const info = await client.uploadFile(file, {
+              fileName: file.name,
+              contentType: mime || undefined,
               onProgress: (progress) => {
                 if (!progress.isComputable || typeof progress.value !== 'number') return;
                 const pct = Math.max(0, Math.min(100, Math.round(progress.value * 100)));
@@ -353,7 +355,7 @@ export class CapUploadCareWeb extends WebPlugin implements CapUploadCarePlugin {
 
   async uploadDataUri(options: UploadCareDataUriOptions): Promise<UploadCareUploadResult> {
     const client = this.ensureClient();
-    const uploadId = crypto.randomUUID();
+    const uploadId = options?.uploadId ?? crypto.randomUUID();
 
     const { dataUri, fileName } = options;
 

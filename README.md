@@ -201,6 +201,7 @@ Options for an individual upload interaction.
 | **`enableCrop`**       | <code>boolean</code>                                                | Whether to enable cropping UI (if supported by the SDK).                                                                     |
 | **`cropRatio`**        | <code>string</code>                                                 | Preferred crop aspect ratio, like '3:2', '1:1', etc. We’ll parse and map this on native side if Uploadcare supports it.      |
 | **`maxFileSizeBytes`** | <code>number</code>                                                 | Max file size in bytes (we can enforce in native before uploading).                                                          |
+| **`uploadId`**         | <code>string</code>                                                 | Let's UI pre-assign uploadId for old openUploader flow.                                                                      |
 
 
 #### UploadCareDataUriOptions
@@ -213,6 +214,7 @@ The `dataUri` must be a full data URI string:
 | -------------- | ------------------- |
 | **`dataUri`**  | <code>string</code> |
 | **`fileName`** | <code>string</code> |
+| **`uploadId`** | <code>string</code> |
 
 
 #### LocalPickedMedia
@@ -243,6 +245,7 @@ The `dataUri` must be a full data URI string:
 | -------------- | ------------------- |
 | **`localId`**  | <code>string</code> |
 | **`fileName`** | <code>string</code> |
+| **`uploadId`** | <code>string</code> |
 
 
 #### PluginListenerHandle

@@ -70,13 +70,16 @@ public class CapUploadCarePlugin extends Plugin {
 
         Intent intent = new Intent(Intent.ACTION_PICK);
 
+        // Helps some picker UIs avoid offering non-openable stuff
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+
         if (mediaType.equals("image")) {
             intent.setType("image/*");
         } else if (mediaType.equals("video")) {
             intent.setType("video/*");
         } else {
             intent.setType("*/*");
-            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] { "image/*", "video/*" });
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
         }
 
         pendingCall = call;
@@ -119,8 +122,13 @@ public class CapUploadCarePlugin extends Plugin {
             return;
         }
 
-        final String uploadId = UUID.randomUUID().toString();
-        final String finalMimeTypeLocal = mimeType; // final for lambdas
+        // Allow JS to provide uploadId so UI can track progress immediately
+        String providedUploadId = call.getString("uploadId");
+        final String uploadId = (providedUploadId != null && !providedUploadId.isEmpty())
+                ? providedUploadId
+                : UUID.randomUUID().toString();
+
+        final String finalMimeTypeLocal = mimeType;
 
         implementation.uploadDataBytes(bytes, fileName, finalMimeTypeLocal, (bytesWritten, contentLength, percent) -> {
             JSObject evt = new JSObject();
@@ -129,12 +137,11 @@ public class CapUploadCarePlugin extends Plugin {
             evt.put("bytesWritten", bytesWritten);
             evt.put("contentLength", contentLength);
 
+            String mt = "image";
             if (finalMimeTypeLocal != null) {
-                evt.put(
-                        "mediaType",
-                        finalMimeTypeLocal.toLowerCase(Locale.US).startsWith("video/") ? "video" : "image"
-                );
+                mt = finalMimeTypeLocal.toLowerCase(Locale.US).startsWith("video/") ? "video" : "image";
             }
+            evt.put("mediaType", mt);
 
             notifyListeners("uploadProgress", evt);
         }, new CapUploadCare.UploadCallback() {
@@ -191,8 +198,13 @@ public class CapUploadCarePlugin extends Plugin {
             return;
         }
 
-        final String uploadId = UUID.randomUUID().toString();
-        final String finalMediaTypeLocal = mediaType; // final for lambdas
+        // Allow JS to provide uploadId so UI can track progress immediately
+        String providedUploadId = call.getString("uploadId");
+        final String uploadId = (providedUploadId != null && !providedUploadId.isEmpty())
+                ? providedUploadId
+                : UUID.randomUUID().toString();
+
+        final String finalMediaTypeLocal = mediaType;
 
         implementation.uploadUri(
                 getContext(),
@@ -251,9 +263,20 @@ public class CapUploadCarePlugin extends Plugin {
         }
 
         String mediaType = null;
+
         JSObject options = call.getObject("options");
-        if (options != null) mediaType = options.getString("mediaType");
-        if (mediaType == null || mediaType.trim().isEmpty()) mediaType = "any";
+        if (options != null) {
+            mediaType = options.getString("mediaType");
+        }
+
+        if (mediaType == null || mediaType.trim().isEmpty()) {
+            mediaType = call.getString("mediaType"); // top-level (how TS calls it)
+        }
+
+        if (mediaType == null || mediaType.trim().isEmpty()) {
+            mediaType = "any";
+        }
+
         mediaType = mediaType.toLowerCase(Locale.US);
 
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -294,15 +317,16 @@ public class CapUploadCarePlugin extends Plugin {
             return;
         }
 
+        // Read from the original call payload (options OR top-level)
         String mediaType = null;
 
-        JSObject options = call.getObject("options");
+        JSObject options = savedCall.getObject("options");
         if (options != null) {
             mediaType = options.getString("mediaType");
         }
 
         if (mediaType == null || mediaType.trim().isEmpty()) {
-            mediaType = call.getString("mediaType");
+            mediaType = savedCall.getString("mediaType");
         }
 
         if (mediaType == null || mediaType.trim().isEmpty()) {
@@ -311,53 +335,69 @@ public class CapUploadCarePlugin extends Plugin {
 
         mediaType = mediaType.toLowerCase(Locale.US);
 
-        final String finalMediaTypeForProgress = mediaType; // final for lambdas
-        final String uploadId = UUID.randomUUID().toString();
+        // Allow JS to provide uploadId so UI can track progress immediately
+        String providedUploadId = savedCall.getString("uploadId");
+        final String uploadId = (providedUploadId != null && !providedUploadId.isEmpty())
+                ? providedUploadId
+                : UUID.randomUUID().toString();
+
         Context context = getContext();
 
-        implementation.uploadSingle(context, uri, finalMediaTypeForProgress, (bytesWritten, contentLength, percent) -> {
-            JSObject evt = new JSObject();
-            evt.put("uploadId", uploadId);
-            evt.put("progress", percent);
-            evt.put("bytesWritten", bytesWritten);
-            evt.put("contentLength", contentLength);
-
-            String mt = finalMediaTypeForProgress.toLowerCase(Locale.US);
-            if (mt.equals("image") || mt.equals("video")) {
-                evt.put("mediaType", mt);
+        // If caller passed "any", infer actual type from the picked Uri so progress always includes "image" or "video"
+        String inferredType = "image";
+        try {
+            String mime = context.getContentResolver().getType(uri);
+            if (mime != null && mime.toLowerCase(Locale.US).startsWith("video/")) {
+                inferredType = "video";
             }
+        } catch (Exception ignored) {}
 
-            notifyListeners("uploadProgress", evt);
-        }, new CapUploadCare.UploadCallback() {
-            @Override
-            public void onSuccess(Map<String, Object> fileMap) {
-                JSObject fileObj = new JSObject();
-                fileObj.put("uuid", fileMap.get("uuid"));
-                fileObj.put("cdnUrl", fileMap.get("cdnUrl"));
+        final String progressMediaType = mediaType.equals("any") ? inferredType : mediaType;
 
-                if (fileMap.containsKey("filename")) fileObj.put("filename", fileMap.get("filename"));
-                if (fileMap.containsKey("sizeBytes")) fileObj.put("sizeBytes", fileMap.get("sizeBytes"));
-                if (fileMap.containsKey("mimeType")) fileObj.put("mimeType", fileMap.get("mimeType"));
-                if (fileMap.containsKey("width")) fileObj.put("width", fileMap.get("width"));
-                if (fileMap.containsKey("height")) fileObj.put("height", fileMap.get("height"));
+        implementation.uploadSingle(
+                context,
+                uri,
+                mediaType, // keep original requested behavior ("any" still works inside implementation)
+                (bytesWritten, contentLength, percent) -> {
+                    JSObject evt = new JSObject();
+                    evt.put("uploadId", uploadId);
+                    evt.put("progress", percent);
+                    evt.put("bytesWritten", bytesWritten);
+                    evt.put("contentLength", contentLength);
+                    evt.put("mediaType", progressMediaType); // always "image" or "video"
+                    notifyListeners("uploadProgress", evt);
+                },
+                new CapUploadCare.UploadCallback() {
+                    @Override
+                    public void onSuccess(Map<String, Object> fileMap) {
+                        JSObject fileObj = new JSObject();
+                        fileObj.put("uuid", fileMap.get("uuid"));
+                        fileObj.put("cdnUrl", fileMap.get("cdnUrl"));
 
-                JSArray files = new JSArray();
-                files.put(fileObj);
+                        if (fileMap.containsKey("filename")) fileObj.put("filename", fileMap.get("filename"));
+                        if (fileMap.containsKey("sizeBytes")) fileObj.put("sizeBytes", fileMap.get("sizeBytes"));
+                        if (fileMap.containsKey("mimeType")) fileObj.put("mimeType", fileMap.get("mimeType"));
+                        if (fileMap.containsKey("width")) fileObj.put("width", fileMap.get("width"));
+                        if (fileMap.containsKey("height")) fileObj.put("height", fileMap.get("height"));
 
-                JSObject ret = new JSObject();
-                ret.put("success", true);
-                ret.put("cancelled", false);
-                ret.put("uploadId", uploadId);
-                ret.put("files", files);
+                        JSArray files = new JSArray();
+                        files.put(fileObj);
 
-                savedCall.resolve(ret);
-            }
+                        JSObject ret = new JSObject();
+                        ret.put("success", true);
+                        ret.put("cancelled", false);
+                        ret.put("uploadId", uploadId);
+                        ret.put("files", files);
 
-            @Override
-            public void onError(Exception error) {
-                savedCall.reject(error.getMessage(), error);
-            }
-        });
+                        savedCall.resolve(ret);
+                    }
+
+                    @Override
+                    public void onError(Exception error) {
+                        savedCall.reject(error.getMessage(), error);
+                    }
+                }
+        );
     }
 
     @ActivityCallback

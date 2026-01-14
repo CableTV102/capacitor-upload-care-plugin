@@ -80,8 +80,11 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("An upload is already in progress")
             return
         }
+        var options = call.getObject("options") ?? [:]
+        if options.isEmpty {
+            options = call.options
+        }
 
-        let options = call.getObject("options") ?? [:]
         pendingCall = call
         pendingMode = .openUploader(options: options)
         presentPicker(options: options, call: call)
@@ -93,8 +96,10 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("A picker is already in progress")
             return
         }
-
-        let options = call.getObject("options") ?? [:]
+        var options = call.getObject("options") ?? [:]
+        if options.isEmpty {
+            options = call.options
+        }
         pendingCall = call
         pendingMode = .pickMedia(options: options)
         presentPicker(options: options, call: call)
@@ -119,10 +124,26 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
+        let providedUploadId = call.getString("uploadId")
+        let uploadId =
+            (providedUploadId != nil && !(providedUploadId!.isEmpty))
+            ? providedUploadId!
+            : UUID().uuidString
+
+        notifyListeners(
+            "uploadProgress",
+            data: [
+                "uploadId": uploadId,
+                "mediaType": mediaType,
+                "progress": 0,
+            ])
+
         if mediaType == "image" {
-            validateAndUploadImage(imageUrl: url, fileName: fileName, call: call)
+            validateAndUploadImage(
+                imageUrl: url, fileName: fileName, call: call, uploadId: uploadId)
         } else {
-            validateAndUploadVideo(videoUrl: url, fileName: fileName, call: call)
+            validateAndUploadVideo(
+                videoUrl: url, fileName: fileName, call: call, uploadId: uploadId)
         }
     }
 
@@ -163,7 +184,13 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
             }
         }
 
-        let uploadId = UUID().uuidString
+        // Allow JS to provide uploadId so UI can track progress immediately
+        let providedUploadId = call.getString("uploadId")
+        let uploadId =
+            (providedUploadId != nil && !(providedUploadId!.isEmpty))
+            ? providedUploadId!
+            : UUID().uuidString
+
         notifyListeners(
             "uploadProgress",
             data: [
@@ -300,7 +327,9 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
 
     // MARK: - Validation + upload (now accepts caller-provided fileName)
 
-    private func validateAndUploadImage(imageUrl: URL, fileName: String, call: CAPPluginCall) {
+    private func validateAndUploadImage(
+        imageUrl: URL, fileName: String, call: CAPPluginCall, uploadId: String
+    ) {
         let ext = extLowercased(for: imageUrl)
         if !Self.allowedImageExts.contains(ext) {
             call.reject("Unsupported image format: .\(ext)")
@@ -333,7 +362,7 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        let uploadId = UUID().uuidString
+        // Emit initial progress using the SAME uploadId
         notifyListeners(
             "uploadProgress",
             data: [
@@ -458,7 +487,9 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    private func validateAndUploadVideo(videoUrl: URL, fileName: String, call: CAPPluginCall) {
+    private func validateAndUploadVideo(
+        videoUrl: URL, fileName: String, call: CAPPluginCall, uploadId: String
+    ) {
         let ext = extLowercased(for: videoUrl)
         if !Self.allowedVideoExts.contains(ext) {
             call.reject("Unsupported video format: .\(ext)")
@@ -494,7 +525,6 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        let uploadId = UUID().uuidString
         notifyListeners(
             "uploadProgress",
             data: [
@@ -592,6 +622,22 @@ extension CapUploadCarePlugin: UIImagePickerControllerDelegate, UINavigationCont
             return
         }
 
+        if let image = info[.originalImage] as? UIImage {
+            let tmp = FileManager.default.temporaryDirectory
+                .appendingPathComponent("capuploadcare-\(UUID().uuidString).jpg")
+            if let data = image.jpegData(compressionQuality: 0.95) {
+                do {
+                    try data.write(to: tmp)
+                    handlePicked(url: tmp, mediaType: "image", call: call, mode: mode)
+                    return
+                } catch {
+                    call.reject(
+                        "Failed to write picked image to temp: \(error.localizedDescription)")
+                    return
+                }
+            }
+        }
+
         call.reject("No media URL returned from picker")
     }
 
@@ -633,15 +679,32 @@ extension CapUploadCarePlugin: UIImagePickerControllerDelegate, UINavigationCont
 
                 call.resolve(payload)
 
-            case .openUploader:
+            case .openUploader(let options):
+                // Use provided uploadId if JS passed it (so UI can track immediately)
+                let optUploadId = options["uploadId"] as? String
+                let uploadId =
+                    (optUploadId != nil && !(optUploadId!.isEmpty))
+                    ? optUploadId!
+                    : UUID().uuidString
+
                 // Maintain old flow: upload immediately with generated name
                 let ext = extLowercased(for: tempUrl)
                 let generatedName = "\(mediaType)-\(Int(Date().timeIntervalSince1970)).\(ext)"
 
                 if mediaType == "image" {
-                    validateAndUploadImage(imageUrl: tempUrl, fileName: generatedName, call: call)
+                    validateAndUploadImage(
+                        imageUrl: tempUrl,
+                        fileName: generatedName,
+                        call: call,
+                        uploadId: uploadId
+                    )
                 } else {
-                    validateAndUploadVideo(videoUrl: tempUrl, fileName: generatedName, call: call)
+                    validateAndUploadVideo(
+                        videoUrl: tempUrl,
+                        fileName: generatedName,
+                        call: call,
+                        uploadId: uploadId
+                    )
                 }
             }
         } catch {
