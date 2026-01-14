@@ -19,6 +19,33 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "uploadPicked", returnType: CAPPluginReturnPromise),
     ]
 
+    private func toJSObject(_ dict: [String: Any]) -> JSObject {
+        var obj = JSObject()
+        for (k, v) in dict {
+            if v is NSNull {
+                continue
+            }
+            switch v {
+            case let s as String:
+                obj[k] = s
+            case let b as Bool:
+                obj[k] = b
+            case let i as Int:
+                obj[k] = i
+            case let d as Double:
+                obj[k] = d
+            case let f as Float:
+                obj[k] = Double(f)
+            case let n as NSNumber:
+                obj[k] = n.doubleValue
+            default:
+                // Last resort: stringify anything unexpected so JS never crashes
+                obj[k] = String(describing: v)
+            }
+        }
+        return obj
+    }
+
     private let implementation = CapUploadCare()
     private var pendingCall: CAPPluginCall?
 
@@ -217,11 +244,13 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
                 case .failure(let error):
                     call.reject(error.localizedDescription)
                 case .success(let fileDict):
+                    let fileObj = self.toJSObject(fileDict)
+
                     call.resolve([
                         "success": true,
                         "cancelled": false,
                         "uploadId": uploadId,
-                        "files": [fileDict],
+                        "files": [fileObj],
                     ])
                 }
             }
@@ -389,11 +418,13 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
                 case .failure(let error):
                     call.reject(error.localizedDescription)
                 case .success(let fileDict):
+                    let fileObj = self.toJSObject(fileDict)
+
                     call.resolve([
                         "success": true,
                         "cancelled": false,
                         "uploadId": uploadId,
-                        "files": [fileDict],
+                        "files": [fileObj],
                     ])
                 }
             }
@@ -565,11 +596,12 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
                         case .failure(let uploadError):
                             call.reject(uploadError.localizedDescription)
                         case .success(let fileDict):
+                            let fileObj = self.toJSObject(fileDict)
                             call.resolve([
                                 "success": true,
                                 "cancelled": false,
                                 "uploadId": uploadId,
-                                "files": [fileDict],
+                                "files": [fileObj],
                             ])
                         }
                     }
