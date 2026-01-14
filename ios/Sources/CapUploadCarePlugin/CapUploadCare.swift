@@ -81,12 +81,16 @@ import Uploadcare
             return
         }
 
-        guard let fileForUploading = uploadcare.file(withContentsOf: fileUrl) else {
-            completion(.failure(UploadError.couldNotCreateUploadFile))
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileUrl, options: .mappedIfSafe)
+        } catch {
+            completion(.failure(error))
             return
         }
 
-        _ = fileForUploading.upload(
+        _ = uploadcare.uploadFile(
+            data,
             withName: fileName,
             store: .auto,
             metadata: nil
