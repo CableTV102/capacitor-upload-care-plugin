@@ -28,8 +28,6 @@ public class CapUploadCare {
     private static final long VIDEO_MAX_BYTES = 512L * 1024L * 1024L;        // 512mb
 
     private static final int IMAGE_MIN_DIM_PX = 566;
-    private static final int VIDEO_MIN_DIM_PX = 608;
-    private static final int VIDEO_MAX_DIM_PX = 1080;
 
     private static final long VIDEO_MIN_MS = 3_000L;
     private static final long VIDEO_MAX_MS = 60_000L;
@@ -200,9 +198,11 @@ public class CapUploadCare {
     public ValidationResult validateVideo(Context context, Uri uri) {
         String mime = context.getContentResolver().getType(uri);
         if (!isAllowedVideoMime(mime)) {
-            return new ValidationResult(false,
+            return new ValidationResult(
+                    false,
                     "Unsupported video format: " + (mime == null ? "unknown" : mime),
-                    mime, null, -1, null, null, null);
+                    mime, null, -1, null, null, null
+            );
         }
 
         long size = getSizeBytes(context, uri);
@@ -211,9 +211,11 @@ public class CapUploadCare {
         }
 
         MediaMetadataRetriever mmr = new MediaMetadataRetriever();
+        Long durationMs = null;
+
+        // Optional: keep reading w/h for metadata return, but NEVER validate them
         Integer w = null;
         Integer h = null;
-        Long durationMs = null;
 
         try {
             mmr.setDataSource(context, uri);
@@ -223,6 +225,7 @@ public class CapUploadCare {
                 durationMs = Long.parseLong(durStr);
             }
 
+            // Keep these if you want width/height surfaced back to JS (purely informational)
             String wStr = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
             String hStr = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
             if (wStr != null) w = Integer.parseInt(wStr);
@@ -233,8 +236,7 @@ public class CapUploadCare {
         } finally {
             try {
                 mmr.release();
-            } catch (Exception ignored) {
-            }
+            } catch (Exception ignored) {}
         }
 
         if (durationMs == null) {
@@ -247,21 +249,6 @@ public class CapUploadCare {
 
         if (durationMs > VIDEO_MAX_MS) {
             return new ValidationResult(false, "Video too long (max 60 seconds)", mime, null, size, w, h, durationMs);
-        }
-
-        if (w == null || h == null || w <= 0 || h <= 0) {
-            return new ValidationResult(false, "Could not determine video resolution", mime, null, size, null, null, durationMs);
-        }
-
-        int minDim = Math.min(w, h);
-        int maxDim = Math.max(w, h);
-
-        if (minDim < VIDEO_MIN_DIM_PX) {
-            return new ValidationResult(false, "Video resolution too small (min smallest dimension: 608px)", mime, null, size, w, h, durationMs);
-        }
-
-        if (maxDim > VIDEO_MAX_DIM_PX) {
-            return new ValidationResult(false, "Video resolution too large (max dimension: 1080px)", mime, null, size, w, h, durationMs);
         }
 
         String displayName = getDisplayName(context, uri);

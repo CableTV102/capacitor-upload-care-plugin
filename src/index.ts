@@ -20,10 +20,9 @@ export * from './definitions';
 export { CapUploadCare };
 
 /**
- * Convenience helper for most Ionic use cases:
- * - Opens the native uploader
- * - Returns the first uploaded file
- * - Returns null if the user cancelled
+ * - Opens the uploader
+ * - Returns UploadCareUploadResult
+ * - If user cancelled: { success: false, cancelled: true, files: [] }
  * - Throws on error
  */
 export async function selectAndUploadImage(

@@ -450,9 +450,13 @@ public class CapUploadCarePlugin extends Plugin {
         if (vr.mimeType != null) ret.put("mimeType", vr.mimeType);
         if (vr.displayName != null) ret.put("displayName", vr.displayName);
         if (vr.sizeBytes >= 0) ret.put("sizeBytes", vr.sizeBytes);
-        if (vr.width != null) ret.put("width", vr.width);
-        if (vr.height != null) ret.put("height", vr.height);
-        if (vr.durationMs != null) ret.put("durationMs", vr.durationMs);
+        if ("image".equals(inferredType)) {
+            if (vr.width != null) ret.put("width", vr.width);
+            if (vr.height != null) ret.put("height", vr.height);
+        }
+        if ("video".equals(inferredType)) {
+            if (vr.durationMs != null) ret.put("durationMs", vr.durationMs);
+        }
 
         savedCall.resolve(ret);
     }
