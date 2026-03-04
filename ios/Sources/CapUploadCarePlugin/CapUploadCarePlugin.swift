@@ -5,7 +5,7 @@ import UIKit
 import UniformTypeIdentifiers
 
 @objc(CapUploadCarePlugin)
-public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin UIAdaptivePresentationControllerDelegate {
+public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "CapUploadCarePlugin"
     public let jsName = "CapUploadCare"
 
@@ -696,19 +696,6 @@ extension CapUploadCarePlugin: UIImagePickerControllerDelegate, UINavigationCont
         call.reject("No media URL returned from picker")
     }
 
-    public func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
-        guard let call = pendingCall else { return }
-
-        call.resolve([
-            "success": false,
-            "cancelled": true,
-            "files": [],
-        ])
-
-        pendingCall = nil
-        pendingMode = nil
-    }
-
     private func handlePicked(url: URL, mediaType: String, call: CAPPluginCall, mode: PendingMode) {
         do {
             let tempUrl = try copyToTemp(originalUrl: url)
@@ -779,5 +766,21 @@ extension CapUploadCarePlugin: UIImagePickerControllerDelegate, UINavigationCont
         } catch {
             call.reject(error.localizedDescription)
         }
+    }
+}
+
+extension CapUploadCarePlugin: UIAdaptivePresentationControllerDelegate {
+    public func presentationControllerDidDismiss(_ presentationController: UIPresentationController)
+    {
+        guard let call = pendingCall else { return }
+
+        call.resolve([
+            "success": false,
+            "cancelled": true,
+            "files": [],
+        ])
+
+        pendingCall = nil
+        pendingMode = nil
     }
 }
