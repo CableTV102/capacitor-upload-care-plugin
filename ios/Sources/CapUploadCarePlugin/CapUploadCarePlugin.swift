@@ -5,7 +5,7 @@ import UIKit
 import UniformTypeIdentifiers
 
 @objc(CapUploadCarePlugin)
-public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
+public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin UIAdaptivePresentationControllerDelegate {
     public let identifier = "CapUploadCarePlugin"
     public let jsName = "CapUploadCare"
 
@@ -289,6 +289,16 @@ public class CapUploadCarePlugin: CAPPlugin, CAPBridgedPlugin {
             let picker = UIImagePickerController()
             picker.sourceType = .photoLibrary
             picker.delegate = self
+
+            // Enable swipe-down dismissal by presenting as a sheet instead of fullScreen.
+            // fullScreen disables the pull-down gesture.
+            picker.modalPresentationStyle = .pageSheet
+
+            // Ensure interactive dismissal is allowed.
+            picker.isModalInPresentation = false
+
+            // Catch swipe-down dismiss and handle it as cancel.
+            picker.presentationController?.delegate = self
 
             if mediaTypeOpt == "video" {
                 picker.mediaTypes = ["public.movie"]
@@ -684,6 +694,19 @@ extension CapUploadCarePlugin: UIImagePickerControllerDelegate, UINavigationCont
         }
 
         call.reject("No media URL returned from picker")
+    }
+
+    public func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        guard let call = pendingCall else { return }
+
+        call.resolve([
+            "success": false,
+            "cancelled": true,
+            "files": [],
+        ])
+
+        pendingCall = nil
+        pendingMode = nil
     }
 
     private func handlePicked(url: URL, mediaType: String, call: CAPPluginCall, mode: PendingMode) {
